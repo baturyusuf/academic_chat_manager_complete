@@ -345,7 +345,10 @@ class MainWindow(QMainWindow):
         self.refresh_chats()
     def refresh_chats(self):
         if not hasattr(self,"chat_list"):return
-        keep_peer=self.selected_peer;self.chat_list.blockSignals(True)
+        current_item=self.chat_list.currentItem();current_peer=current_item.data(Qt.UserRole) if current_item else None
+        selected_peers={int(item.data(Qt.UserRole)) for item in self.chat_list.selectedItems() if item.data(Qt.UserRole) is not None}
+        if not selected_peers and self.selected_peer is not None:selected_peers={int(self.selected_peer)}
+        keep_peer=int(self.selected_peer) if self.selected_peer is not None else None;self.chat_list.blockSignals(True)
         query=(self.chat_search.text().strip() or self.global_search.text().strip())
         mode=self.visible_mode.currentText() if hasattr(self,"visible_mode") else "Tüm sohbetler"
         include_hidden=mode=="Gizlenen sohbetleri yönet"
@@ -363,7 +366,10 @@ class MainWindow(QMainWindow):
             title=f"{row['title']}\n{row.get('last_message') or row['kind']} · {row.get('last_message_at') or ''}"
             if row['hidden']:title="◌  "+title
             item=QListWidgetItem(title);item.setData(Qt.UserRole,row['peer_id']);item.setToolTip(row['title']);item.setIcon(self._avatar_icon(row['title']));item.setSizeHint(QSize(0,self._chat_row_height()));self.chat_list.addItem(item)
-            if keep_peer is not None and int(row['peer_id'])==int(keep_peer):self.chat_list.setCurrentItem(item,QItemSelectionModel.ClearAndSelect|QItemSelectionModel.Rows)
+            peer_id=int(row['peer_id'])
+            if peer_id in selected_peers:item.setSelected(True)
+            if peer_id==current_peer:self.chat_list.setCurrentItem(item,QItemSelectionModel.NoUpdate)
+            elif peer_id==keep_peer and current_peer is None:self.chat_list.setCurrentItem(item,QItemSelectionModel.NoUpdate)
         self.chat_list.blockSignals(False)
     def _chat_row_height(self):
         base={"Rahat":76,"Standart":66,"Yoğun":56}.get(self.density.currentText() if hasattr(self,"density") else "Rahat",66)
@@ -552,13 +558,15 @@ class MainWindow(QMainWindow):
         if not item:return
         peers=self._chat_peers_for_context(item)
         if not peers:return
-        menu=QMenu(self.chat_list);hide=menu.addAction("Seçilileri gizle");add=menu.addAction("Seçilileri klasöre ekle");chosen=menu.exec(self.chat_list.mapToGlobal(pos))
+        menu=QMenu(self.chat_list);hide=menu.addAction("Seçilileri gizle");add=menu.addAction("Seçilileri klasöre ekle");bulk=menu.addAction("Seçililere toplu mesaj gönder");chosen=menu.exec(self.chat_list.mapToGlobal(pos))
         if chosen==hide:self.store.set_hidden(peers,True);self.refresh_chats()
         elif chosen==add:
             cs=self.store.collections();names=[" › ".join(self.store.collection_path(c['id'])) for c in cs]
             if not cs:QMessageBox.information(self,"Klasör yok","Önce Klasörler sekmesinden bir klasör oluşturun.");return
             name,ok=QInputDialog.getItem(self,"Klasöre ekle","Hedef klasör:",names,0,False)
             if ok:self.store.add_chats_to_collection(cs[names.index(name)]['id'],peers);self.refresh_tree();self.statusBar().showMessage(f"{len(peers)} sohbet klasöre eklendi",5000)
+        elif chosen==bulk:
+            self._activate_chat_selection(peers);self._start_bulk(direct_peer_ids=peers)
     def _chat_peers_for_context(self,item):
         if item.data(Qt.UserRole) is None:return []
         # Right-clicking an unselected row makes it the sole target. Right-clicking
@@ -568,9 +576,19 @@ class MainWindow(QMainWindow):
             self.chat_list.setCurrentItem(item,QItemSelectionModel.ClearAndSelect|QItemSelectionModel.Rows)
         return [int(i.data(Qt.UserRole)) for i in self.chat_list.selectedItems() if i.data(Qt.UserRole) is not None]
     def _chat_selected(self):
-        item=self.chat_list.currentItem()
-        if not item or item.data(Qt.UserRole) is None:return
-        self._activate_chat_context(int(item.data(Qt.UserRole)))
+        peers=[int(item.data(Qt.UserRole)) for item in self.chat_list.selectedItems() if item.data(Qt.UserRole) is not None]
+        if len(peers)>1:
+            self._activate_chat_selection(peers);return
+        if len(peers)==1:
+            self._activate_chat_context(peers[0]);return
+        if self.context_mode=="selection":
+            self._chat_open_generation+=1;self.context_mode="none";self.selected_peer=None;self.active_recipient_ids=[];self.messages.clear();self.chat_title.setText("Sohbet seçin");self.chat_meta.setText("Bir sohbet seçtiğinizde geçmişi burada görünür")
+    def _activate_chat_selection(self,peer_ids):
+        peers=list(dict.fromkeys(int(peer_id) for peer_id in peer_ids))
+        if len(peers)<2:return
+        self._chat_open_generation+=1;self.context_mode="selection";self.selected_peer=None;self.current_collection=None;self.active_collection_ids=[];self.active_recipient_ids=peers;self.reply_to=None;self._clear_chat_files();self.older_messages_btn.setEnabled(False);self.message_search.setEnabled(False)
+        self.chat_title.setText(f"{len(peers)} sohbet seçildi");self.chat_meta.setText("Sağ tıklayarak klasöre ekleyin veya toplu mesaj gönderin")
+        self.message_input.send_on_enter=False;self.message_input.setPlaceholderText("Seçili sohbetlere gönderilecek mesaj… (Enter: yeni satır)");self.messages.clear()
     async def _open_telegram_chat(self,peer_id,generation=None):
         generation=self._chat_open_generation if generation is None else generation
         await self.load_history(peer_id,generation=generation)
