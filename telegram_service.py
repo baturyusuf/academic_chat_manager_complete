@@ -58,6 +58,9 @@ class TelegramService:
             rows.append({"peer_id":peer_id,"message_id":m.id,"sender_id":m.sender_id,"sender_name":sender_name,"text":m.message or "","date":m.date.isoformat() if m.date else None,"outgoing":int(m.out),"media_json":__import__('json').dumps(file,ensure_ascii=False) if file else None,"message":m})
         return rows
     async def send_text(self,peer_id,text,reply_to=None):return await self.client.send_message(self._entity(peer_id),text,reply_to=reply_to)
+    async def export_chat_invite_link(self,peer_id):
+        """Create an invite link for a group/channel using the connected account's rights."""
+        return await self.client.export_chat_invite_link(self._entity(int(peer_id)))
     async def mark_read(self,peer_id,max_id):return await self.client.send_read_acknowledge(self._entity(peer_id),max_id=max_id)
     async def send_files(self,peer_id,paths,caption="",progress_callback=None,reply_to=None):
         paths=[str(Path(p)) for p in paths]
