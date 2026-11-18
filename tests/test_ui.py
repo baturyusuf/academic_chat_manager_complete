@@ -144,3 +144,52 @@ def test_history_columns_are_sortable_resizable_and_include_message_and_files(tm
     assert w.history.horizontalHeader().sectionResizeMode(0)==main.QHeaderView.Interactive
     assert w.history.item(0,5).text()=="Toplantı duyurusu" and w.history.item(0,6).text()=="toplanti.pdf"
     w.close()
+
+def test_chat_multi_selection_survives_refresh_and_suppresses_history(tmp_path,monkeypatch):
+    app=QApplication.instance() or QApplication([])
+    from academic_chat_manager import main
+    monkeypatch.setattr(main,"Store",lambda:__import__('academic_chat_manager.storage',fromlist=['Store']).Store(tmp_path/"ui10.sqlite3"))
+    main.PREFS.setValue("onboarding/dismissed",True)
+    w=MainWindow();rows=[]
+    for peer_id,title in ((-701,"Birinci sohbet"),(-702,"İkinci sohbet")):
+        rows.append({"peer_id":peer_id,"access_hash":1,"title":title,"kind":"Grup","username":None,"can_send":1,"unread_count":0,"last_message":"Son mesaj","last_message_at":"2026-11-18"})
+    w.store.upsert_chats(rows);w.refresh_chats();w.chat_list.blockSignals(True)
+    first,second=w.chat_list.item(0),w.chat_list.item(1);first.setSelected(True);second.setSelected(True);w.chat_list.setCurrentItem(second,main.QItemSelectionModel.NoUpdate);w.chat_list.blockSignals(False)
+    w._chat_selected()
+    assert w.context_mode=="selection" and w.selected_peer is None and w.active_recipient_ids==[-701,-702]
+    assert w.messages.count()==0
+    w.refresh_chats()
+    assert {int(item.data(main.Qt.UserRole)) for item in w.chat_list.selectedItems()}=={-701,-702}
+    assert w.context_mode=="selection" and w.messages.count()==0
+    w.close()
+
+def test_chat_selection_context_menu_adds_folder_or_starts_bulk(tmp_path,monkeypatch):
+    app=QApplication.instance() or QApplication([])
+    from academic_chat_manager import main
+    monkeypatch.setattr(main,"Store",lambda:__import__('academic_chat_manager.storage',fromlist=['Store']).Store(tmp_path/"ui11.sqlite3"))
+    main.PREFS.setValue("onboarding/dismissed",True)
+    w=MainWindow();rows=[]
+    for peer_id,title in ((-711,"Birinci"),(-712,"İkinci")):
+        rows.append({"peer_id":peer_id,"access_hash":1,"title":title,"kind":"Grup","username":None,"can_send":1,"unread_count":0,"last_message":"","last_message_at":None})
+    w.store.upsert_chats(rows);folder=w.store.create_collection("Hedef klasör");w.refresh_chats();w.show();app.processEvents()
+    first,second=w.chat_list.item(0),w.chat_list.item(1);w.chat_list.blockSignals(True);first.setSelected(True);second.setSelected(True);w.chat_list.setCurrentItem(second,main.QItemSelectionModel.NoUpdate);w.chat_list.blockSignals(False)
+    w._chat_selected();captured={}
+    monkeypatch.setattr(w,"_start_bulk",lambda **kwargs:captured.update(kwargs))
+    class Action:
+        def __init__(self,label):self.label=label
+        def text(self):return self.label
+    class FakeMenu:
+        choice=""
+        def __init__(self,*args):self.items=[]
+        def addAction(self,label):action=Action(label);self.items.append(action);return action
+        def exec(self,*args):return next(action for action in self.items if action.text()==self.choice)
+    monkeypatch.setattr(main,"QMenu",FakeMenu)
+    FakeMenu.choice="Seçililere toplu mesaj gönder"
+    w._chat_menu(w.chat_list.visualItemRect(first).center())
+    assert captured["direct_peer_ids"]==[-711,-712]
+    assert w.context_mode=="selection" and w.messages.count()==0
+    FakeMenu.choice="Seçilileri klasöre ekle"
+    monkeypatch.setattr(main.QInputDialog,"getItem",lambda *args:("Hedef klasör",True))
+    w._chat_menu(w.chat_list.visualItemRect(first).center())
+    assert {row["peer_id"] for row in w.store.collection_chats(folder)}=={-711,-712}
+    w.close()
