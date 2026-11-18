@@ -273,6 +273,38 @@ class BulkConfirmDialog(QDialog):
         warning=QLabel("Gönderilen mesajlar geri alınamaz. Başlatıldıktan sonra bekleyen alıcılar Gönderim Geçmişi bölümünden iptal edilebilir.");warning.setWordWrap(True);root.addWidget(warning)
         buttons=QDialogButtonBox();self.cancel_button=buttons.addButton("Geri dön",QDialogButtonBox.RejectRole);self.send_button=buttons.addButton("Gönderimi başlat",QDialogButtonBox.AcceptRole);self.send_button.setObjectName("primary");self.cancel_button.clicked.connect(self.reject);self.send_button.clicked.connect(self.accept);root.addWidget(buttons)
 
+class InviteLinksDialog(QDialog):
+    """Editable, copyable folder tree containing the generated Telegram invite links."""
+    def __init__(self,entries,parent=None):
+        super().__init__(parent);self.setWindowTitle("Davet bağlantıları");self.resize(760,620);self.setMinimumSize(520,380)
+        root=QVBoxLayout(self)
+        intro=QLabel("Klasör yapısı ve davet bağlantıları. Metni dilediğiniz gibi düzenleyip kopyalayabilirsiniz.");intro.setWordWrap(True);root.addWidget(intro)
+        self.editor=QPlainTextEdit();self.editor.setObjectName("inviteText");self.editor.setLineWrapMode(QPlainTextEdit.NoWrap);self.editor.setPlainText(self._format_entries(entries));root.addWidget(self.editor,1)
+        footer=QHBoxLayout();self.copy_button=QPushButton("Metni kopyala");self.copy_button.setObjectName("primary");self.copy_status=QLabel("");self.copy_status.setObjectName("muted");close=QPushButton("Kapat");footer.addWidget(self.copy_button);footer.addWidget(self.copy_status);footer.addStretch();footer.addWidget(close);root.addLayout(footer)
+        self.copy_button.clicked.connect(self._copy);close.clicked.connect(self.accept)
+    @staticmethod
+    def _format_entries(entries):
+        tree={"children":{},"links":[]}
+        for entry in entries:
+            node=tree
+            path=[part for part in entry.get("path",[]) if part] or ["Sohbet"]
+            for part in path:
+                node=node["children"].setdefault(part,{"children":{},"links":[]})
+            node["links"].append(entry.get("link") or "[Davet bağlantısı oluşturulamadı]")
+        lines=["Aşağıdaki bağlantılardan ilgili topluluğa katılım sağlayabilirsiniz.",""]
+        def append(node,depth=0):
+            for label,child in node["children"].items():
+                prefix="   "*depth+("-> " if depth else "")
+                links=child["links"]
+                if links:label+=f' ==> "{links[0]}"'
+                lines.append(prefix+label)
+                for link in links[1:]:lines.append("   "*(depth+1)+f'-> Davet bağlantısı ==> "{link}"')
+                append(child,depth+1)
+        append(tree)
+        return "\n".join(lines).rstrip()
+    def _copy(self):
+        QApplication.clipboard().setText(self.editor.toPlainText());self.copy_status.setText("Metin panoya kopyalandı.")
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__();self.setWindowTitle("Akademik Sohbet Yöneticisi");self.setWindowIcon(QIcon(str(APP_DIR/"assets"/"app.ico")));self.resize(1550,950);self.setMinimumSize(1050,650);self.setStyleSheet(_theme_stylesheet(False,"#A90025"))
@@ -508,7 +540,7 @@ class MainWindow(QMainWindow):
         item=self.tree.itemAt(pos)
         if not item:return
         nodes=self._tree_nodes_for_context(item);kind=item.data(0,TREE_NODE_KIND_ROLE);cid=item.data(0,Qt.UserRole)
-        menu=QMenu(self.tree);send=menu.addAction("Seçili klasör/sohbetlere mesaj gönder…")
+        menu=QMenu(self.tree);send=menu.addAction("Seçili klasör/sohbetlere mesaj gönder…");invite=menu.addAction("Davet bağlantıları oluştur…")
         new=rename=move_action=up_action=down_action=color_action=icon_action=delete=remove=None
         if kind=="collection":
             menu.addSeparator();new=menu.addAction("Alt klasör oluştur");rename=menu.addAction("Yeniden adlandır");move_action=menu.addAction("Başka klasöre taşı…");up_action=menu.addAction("Sıralamada yukarı al");down_action=menu.addAction("Sıralamada aşağı al");color_action=menu.addAction("Renk seç…");icon_action=menu.addAction("Simge seç…");delete=menu.addAction("Klasörü sil")
@@ -519,6 +551,9 @@ class MainWindow(QMainWindow):
             collection_ids,peer_ids=self._tree_target_ids(nodes)
             self._collection_selected(item)
             self._start_bulk(collection_ids=collection_ids,direct_peer_ids=peer_ids,preserve_view=True)
+        elif chosen==invite:
+            collection_ids,peer_ids=self._tree_target_ids(nodes)
+            self._start_invite_link_creation(collection_ids,peer_ids)
         elif chosen==new:
             name,ok=QInputDialog.getText(self,"Alt klasör","Klasör adı:")
             if ok and name:self.store.create_collection(name,int(cid));self.refresh_tree()
@@ -551,6 +586,49 @@ class MainWindow(QMainWindow):
             if ok and icon.strip():
                 with self.store.db() as db:db.execute("UPDATE collections SET icon=? WHERE id=?",(icon.strip()[:8],int(cid)))
                 self.refresh_tree()
+    def _start_invite_link_creation(self,collection_ids,peer_ids):
+        """Resolve selected folder/chat targets and start creating their invite links."""
+        targets={}
+        collection_rows={int(c["id"]):c for c in self.store.collections()}
+        for cid in collection_ids:
+            if int(cid) not in collection_rows:continue
+            root_path_ids=self.store.collection_path_ids(int(cid))
+            for chat in self.store.collection_chats(int(cid),True):
+                peer_id=int(chat["peer_id"]);title=chat["title"]
+                paths=[self.store.collection_path(owner_id) for owner_id in self.store.chat_collection_ids(peer_id)
+                       if self.store.collection_path_ids(owner_id)[:len(root_path_ids)]==root_path_ids]
+                if not paths:paths=[self.store.collection_path(int(cid))]
+                target=targets.setdefault(peer_id,{"title":title,"paths":[]})
+                target["paths"].extend(path+[title] for path in paths)
+        for peer_id in peer_ids:
+            peer_id=int(peer_id);chat=self.store.chat(peer_id)
+            if not chat:continue
+            paths=[self.store.collection_path(owner_id) for owner_id in self.store.chat_collection_ids(peer_id)] or [[]]
+            target=targets.setdefault(peer_id,{"title":chat["title"],"paths":[]})
+            target["paths"].extend(path+[chat["title"]] for path in paths)
+        if not targets:
+            QMessageBox.information(self,"Davet bağlantısı oluştur","Seçilen klasörlerde oluşturulacak sohbet bulunamadı.");return
+        if not self.telegram or not self.telegram.client or not self.telegram.client.is_connected():
+            QMessageBox.warning(self,"Telegram bağlı değil","Davet bağlantısı oluşturmak için önce Telegram hesabını bağlayın.");return
+        asyncio.create_task(self._create_invite_links(targets))
+    async def _create_invite_links(self,targets):
+        self.statusBar().showMessage(f"{len(targets)} sohbet için davet bağlantısı oluşturuluyor…")
+        invite_by_peer={}
+        for peer_id in targets:
+            if int(peer_id)>=0:
+                invite_by_peer[peer_id]="[Kişi sohbetleri için davet bağlantısı desteklenmiyor]";continue
+            try:
+                invite_by_peer[peer_id]=await self.telegram.export_chat_invite_link(peer_id)
+            except Exception as e:
+                reason=str(e).strip() or type(e).__name__
+                invite_by_peer[peer_id]=f"[Davet bağlantısı oluşturulamadı: {reason}]"
+        entries=[]
+        for peer_id,target in targets.items():
+            link=invite_by_peer.get(peer_id)
+            for path in dict.fromkeys(tuple(p) for p in target["paths"]):
+                entries.append({"path":list(path),"link":link})
+        self.statusBar().showMessage("Davet bağlantıları hazırlandı",5000)
+        dlg=InviteLinksDialog(entries,self);dlg.exec()
     def _dropped_chats(self,cid,peer_ids):
         self.store.add_chats_to_collection(cid,peer_ids);self.refresh_tree();self.statusBar().showMessage(f"{len(peer_ids)} sohbet klasöre eklendi",4000)
     def _chat_menu(self,pos):
