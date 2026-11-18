@@ -110,9 +110,14 @@ class Store:
         allc={r['id']:r for r in self.collections()}; out=[]; cur=allc.get(cid)
         while cur:out.append(cur['name']);cur=allc.get(cur['parent_id'])
         return list(reversed(out))
+    def collection_path_ids(self,cid):
+        allc={int(r['id']):r for r in self.collections()};out=[];cur=allc.get(int(cid))
+        while cur:out.append(int(cur['id']));cur=allc.get(cur['parent_id'])
+        return list(reversed(out))
+    def chat_collection_ids(self,peer_id):
+        with self.db() as c:return [int(r[0]) for r in c.execute("SELECT collection_id FROM collection_chats WHERE peer_id=? ORDER BY collection_id",(int(peer_id),))]
     def chat_collection_paths(self,peer_id):
-        with self.db() as c:
-            ids=[int(r[0]) for r in c.execute("SELECT collection_id FROM collection_chats WHERE peer_id=? ORDER BY collection_id",(int(peer_id),))]
+        ids=self.chat_collection_ids(peer_id)
         paths=[" › ".join(self.collection_path(cid)) for cid in ids]
         return [p for p in paths if p]
     # Preferences and message cache
