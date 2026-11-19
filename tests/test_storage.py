@@ -33,6 +33,19 @@ def test_full_sync_marks_missing_peers_unavailable_without_losing_folder_members
 def test_preferences_persist_between_store_instances(tmp_path):
     path=tmp_path/"prefs.sqlite";Store(path).set_preference("appearance/font_size",16)
     assert Store(path).preference("appearance/font_size")==16
+
+def test_open_skips_legacy_send_jobs_whose_collection_was_deleted(tmp_path):
+    path=tmp_path/"legacy.sqlite";store=Store(path);folder=store.create_collection("Daha sonra silinen klasör")
+    store.create_job("legacy-job",folder,"Eski duyuru",[],[{"peer_id":-9501,"title":"Grup"}])
+    store.delete_collection(folder)
+    reopened=Store(path)
+    assert reopened.jobs()[0]["id"]=="legacy-job"
+    assert reopened.job_collection_ids("legacy-job")==[]
+
+def test_cached_message_reactions_survive_storage_roundtrip(store):
+    store.cache_messages([{"peer_id":-9601,"message_id":1,"sender_id":1,"sender_name":"Yusuf","text":"Merhaba","date":"2026-11-19T10:00:00+00:00","outgoing":1,"media_json":None,"reactions_json":'[{"emoji":"👍","count":2,"chosen":true}]',"reply_json":'{"sender":"Ayşe","text":"Yarın görüşürüz"}'}])
+    assert store.messages(-9601)[0]["reactions_json"]=='[{"emoji":"👍","count":2,"chosen":true}]'
+    assert store.messages(-9601)[0]["reply_json"]=='{"sender":"Ayşe","text":"Yarın görüşürüz"}'
 def test_messages_are_returned_oldest_to_newest_and_can_be_paginated(store):
     def message(message_id):
         return {"peer_id":-123,"message_id":message_id,"sender_id":1,"sender_name":"Yusuf","text":str(message_id),"date":"2026-01-01T10:00:00","outgoing":0,"media_json":None}
