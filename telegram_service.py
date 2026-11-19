@@ -5,7 +5,7 @@ import os
 from datetime import timezone
 from pathlib import Path
 from telethon import TelegramClient, events, errors, types, utils
-from telethon.tl.functions.messages import GetHistoryRequest
+from telethon.tl.functions.messages import GetHistoryRequest, SendReactionRequest
 
 class TelegramService:
     def __init__(self,session_path:Path):
@@ -55,12 +55,20 @@ class TelegramService:
             file=None
             if m.media:
                 f=m.file; file={"name":getattr(f,"name",None) or getattr(f,"ext",None) or "Ek", "size":getattr(f,"size",None),"mime_type":getattr(f,"mime_type",None)}
-            rows.append({"peer_id":peer_id,"message_id":m.id,"sender_id":m.sender_id,"sender_name":sender_name,"text":m.message or "","date":m.date.isoformat() if m.date else None,"outgoing":int(m.out),"media_json":__import__('json').dumps(file,ensure_ascii=False) if file else None,"message":m})
+            reaction_rows=[]
+            for item in getattr(getattr(m,"reactions",None),"results",[]) or []:
+                emoji=getattr(getattr(item,"reaction",None),"emoticon",None)
+                if emoji:reaction_rows.append({"emoji":emoji,"count":int(getattr(item,"count",0) or 0),"chosen":bool(getattr(item,"chosen",False))})
+            reply_id=getattr(getattr(m,"reply_to",None),"reply_to_msg_id",None)
+            rows.append({"peer_id":peer_id,"message_id":m.id,"sender_id":m.sender_id,"sender_name":sender_name,"text":m.message or "","date":m.date.isoformat() if m.date else None,"outgoing":int(m.out),"media_json":__import__('json').dumps(file,ensure_ascii=False) if file else None,"reactions_json":__import__('json').dumps(reaction_rows,ensure_ascii=False),"reply_to_message_id":reply_id,"message":m})
         return rows
     async def send_text(self,peer_id,text,reply_to=None):return await self.client.send_message(self._entity(peer_id),text,reply_to=reply_to)
     async def export_chat_invite_link(self,peer_id):
         """Create an invite link for a group/channel using the connected account's rights."""
         return await self.client.export_chat_invite_link(self._entity(int(peer_id)))
+    async def send_reaction(self,peer_id,message_id,emoji):
+        request=SendReactionRequest(peer=self._entity(int(peer_id)),msg_id=int(message_id),reaction=[types.ReactionEmoji(emoticon=str(emoji))])
+        return await self.client(request)
     async def mark_read(self,peer_id,max_id):return await self.client.send_read_acknowledge(self._entity(peer_id),max_id=max_id)
     async def send_files(self,peer_id,paths,caption="",progress_callback=None,reply_to=None):
         paths=[str(Path(p)) for p in paths]
