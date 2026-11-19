@@ -1,7 +1,8 @@
 import os
 os.environ.setdefault("QT_QPA_PLATFORM","offscreen")
 from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QPoint
+from PySide6.QtGui import QImage, QColor
 from PySide6.QtTest import QTest
 from academic_chat_manager.main import MainWindow
 
@@ -193,3 +194,52 @@ def test_chat_selection_context_menu_adds_folder_or_starts_bulk(tmp_path,monkeyp
     w._chat_menu(w.chat_list.visualItemRect(first).center())
     assert {row["peer_id"] for row in w.store.collection_chats(folder)}=={-711,-712}
     w.close()
+
+def test_clipboard_image_paste_adds_a_real_attachment(tmp_path,monkeypatch):
+    from academic_chat_manager import main
+    app=QApplication.instance() or QApplication([])
+    monkeypatch.setattr(main,"app_data_dir",lambda:tmp_path)
+    edit=main.FileDropTextEdit();received=[];edit.filesDropped.connect(received.extend)
+    image=QImage(3,3,QImage.Format_ARGB32);image.fill(QColor("red"));app.clipboard().setImage(image)
+    QTest.keyClick(edit,Qt.Key_V,Qt.ControlModifier)
+    assert len(received)==1 and received[0].endswith(".png")
+    assert __import__("pathlib").Path(received[0]).is_file()
+    app.clipboard().clear()
+
+def test_reply_selection_displays_a_clearable_quote_preview(tmp_path,monkeypatch):
+    from academic_chat_manager import main
+    app=QApplication.instance() or QApplication([])
+    monkeypatch.setattr(main,"Store",lambda:__import__('academic_chat_manager.storage',fromlist=['Store']).Store(tmp_path/"reply.sqlite3"))
+    main.PREFS.setValue("onboarding/dismissed",True)
+    w=MainWindow();w._set_reply({"message_id":42,"sender_name":"Ayşe Demir","text":"Yarınki toplantı saat kaçta?"})
+    assert w.reply_to==42 and not w.reply_preview_frame.isHidden()
+    assert "Ayşe Demir" in w.reply_preview.text() and "Yarınki toplantı" in w.reply_preview.text()
+    w._clear_reply();assert w.reply_to is None and w.reply_preview_frame.isHidden()
+    w.close()
+
+def test_dismissing_message_context_menu_does_not_start_download(tmp_path,monkeypatch):
+    from academic_chat_manager import main
+    app=QApplication.instance() or QApplication([])
+    monkeypatch.setattr(main,"Store",lambda:__import__('academic_chat_manager.storage',fromlist=['Store']).Store(tmp_path/"menu.sqlite3"))
+    main.PREFS.setValue("onboarding/dismissed",True)
+    w=MainWindow();w.messages.resize(500,300);item=main.QListWidgetItem();item.setData(main.Qt.UserRole,{"peer_id":-9701,"message_id":1,"sender_name":"Yusuf","text":"Test","outgoing":0,"media_json":None});w.messages.addItem(item);w.messages.show();app.processEvents()
+    class FakeMenu:
+        def __init__(self,*args):pass
+        def addAction(self,*args):return object()
+        def addMenu(self,*args):return FakeMenu()
+        def exec(self,*args):return None
+    monkeypatch.setattr(main,"QMenu",FakeMenu)
+    def fail_if_download(*args):raise AssertionError("menu dismissal must not start a download")
+    monkeypatch.setattr(main.QFileDialog,"getSaveFileName",fail_if_download)
+    w._message_menu(QPoint(10,10))
+    w.close()
+
+def test_chat_message_time_uses_local_timezone_and_displays_reactions():
+    from academic_chat_manager import main
+    app=QApplication.instance() or QApplication([])
+    value="2026-11-19T12:30:00+00:00"
+    expected=main._local_datetime(value).strftime("%H:%M")
+    assert main._format_local_datetime(value,"%H:%M")==expected
+    row=main.MessageBubbleRow({"sender_name":"Yusuf","text":"Merhaba","date":value,"outgoing":1,"reactions_json":'[{"emoji":"👍","count":2}]',"reply_json":'{"sender":"Ayşe","text":"Toplantı saat kaçta?"}'})
+    assert any(label.text()=="👍 2" for label in row.findChildren(main.QLabel))
+    assert any("Ayşe" in label.text() and "Toplantı saat kaçta?" in label.text() for label in row.findChildren(main.QLabel))
