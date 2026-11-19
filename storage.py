@@ -40,7 +40,13 @@ class Store:
             ''')
             columns={r[1] for r in c.execute("PRAGMA table_info(chats)")}
             if "available" not in columns:c.execute("ALTER TABLE chats ADD COLUMN available INTEGER NOT NULL DEFAULT 1")
-            c.execute("INSERT OR IGNORE INTO send_job_collections(job_id,collection_id) SELECT id,collection_id FROM send_jobs WHERE collection_id IS NOT NULL")
+            # Older databases may retain send jobs after their collection was deleted.
+            # Only backfill memberships whose collection still exists, otherwise the
+            # foreign key on send_job_collections prevents the app from starting.
+            c.execute("""INSERT OR IGNORE INTO send_job_collections(job_id,collection_id)
+                         SELECT j.id,j.collection_id FROM send_jobs j
+                         JOIN collections col ON col.id=j.collection_id
+                         WHERE j.collection_id IS NOT NULL""")
     # Chat cache
     def upsert_chats(self, rows, complete_sync=False):
         with self.db() as c:
