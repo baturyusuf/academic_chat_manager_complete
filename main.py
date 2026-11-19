@@ -1,10 +1,10 @@
 from __future__ import annotations
-import asyncio, json, mimetypes, os, sys, traceback
+import asyncio, json, mimetypes, os, sys, traceback, uuid
 from pathlib import Path
 import certifi
 if os.name=="nt" or not os.environ.get("SSL_CERT_FILE") or not Path(os.environ["SSL_CERT_FILE"]).is_file():
     os.environ["SSL_CERT_FILE"]=certifi.where()
-from datetime import datetime
+from datetime import datetime, timezone
 from PySide6.QtCore import Qt, QSettings, QSize, QRect, Signal, QMimeData, QTimer, QItemSelectionModel
 from PySide6.QtGui import QAction, QFont, QPixmap, QColor, QDrag, QIcon, QPalette, QKeySequence, QShortcut, QPainter
 from PySide6.QtWidgets import *
@@ -29,6 +29,25 @@ def _mix_color(foreground: str, background: str, amount: float) -> str:
     channels = [round(bg.getRgb()[i] * (1 - amount) + fg.getRgb()[i] * amount) for i in range(3)]
     return QColor(*channels).name()
 
+def _local_datetime(value):
+    """Parse Telegram/SQLite UTC timestamps and convert them to the computer's zone."""
+    if not value:return None
+    try:
+        parsed=datetime.fromisoformat(str(value).replace("Z","+00:00"))
+        if parsed.tzinfo is None:parsed=parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone()
+    except (TypeError,ValueError):return None
+
+def _format_local_datetime(value,fmt="%Y-%m-%d %H:%M:%S"):
+    parsed=_local_datetime(value)
+    return parsed.strftime(fmt) if parsed else str(value or "")
+
+def _format_chat_datetime(value):
+    parsed=_local_datetime(value)
+    if not parsed:return ""
+    now=datetime.now().astimezone()
+    return parsed.strftime("%H:%M" if parsed.date()==now.date() else "%d.%m.%Y")
+
 def _theme_stylesheet(dark: bool, accent: str) -> str:
     highlight = _mix_color(accent, "#ffffff", .42) if dark else accent
     accent_text = "#202938" if QColor(accent).lightness() > 155 else "#ffffff"
@@ -52,6 +71,7 @@ def _theme_stylesheet(dark: bool, accent: str) -> str:
     QStackedWidget#centerStack{{background:transparent}}
     QScrollArea#settingsPage,QScrollArea#settingsPage QWidget#qt_scrollarea_viewport,QWidget#settingsInner{{background:{c['surface']}}}
     QFrame#chatHeader{{background:{c['surface']};border:0;border-bottom:1px solid {c['border']};border-top-left-radius:14px;border-top-right-radius:14px}}
+    QFrame#replyPreviewFrame{{background:{c['raised']};border-left:3px solid {accent};border-radius:7px}}
     QLabel#brandTitle,QLabel#sectionTitle{{font-weight:700;color:{c['text']}}}
     QLabel#brandSubtitle,QLabel#muted{{color:{c['muted']}}}
     QPushButton{{border:0;border-radius:9px;background:transparent;padding:8px 11px;text-align:left;color:{c['text']}}}
@@ -85,6 +105,7 @@ def _theme_stylesheet(dark: bool, accent: str) -> str:
     QLabel#messageSender{{font-weight:650;color:{highlight}}}
     QLabel#messageText{{color:{c['text']}}}
     QLabel#messageTime{{color:{c['muted']}}}
+    QLabel#replyQuote{{background:{c['raised']};border-left:3px solid {accent};border-radius:5px;padding:5px 8px;color:{c['muted']}}}
     QListWidget#messages::item{{border:0;background:transparent;padding:0}}
     QScrollBar:vertical{{background:transparent;width:10px;margin:3px}}
     QScrollBar::handle:vertical{{background:{c['border']};border-radius:5px;min-height:30px}}
@@ -130,6 +151,15 @@ class FileDropTextEdit(QPlainTextEdit):
     filesDropped=Signal(list)
     sendRequested=Signal()
     def keyPressEvent(self,event):
+        if event.matches(QKeySequence.Paste):
+            clipboard=QApplication.clipboard();mime=clipboard.mimeData()
+            if mime.hasImage():
+                image=clipboard.image()
+                if not image.isNull():
+                    folder=app_data_dir()/"clipboard_images";folder.mkdir(parents=True,exist_ok=True)
+                    image_path=folder/f"pasted_{uuid.uuid4().hex}.png"
+                    if image.save(str(image_path),"PNG"):
+                        self.filesDropped.emit([str(image_path)]);event.accept();return
         if getattr(self,"send_on_enter",False) and event.key() in (Qt.Key_Return,Qt.Key_Enter) and not (event.modifiers()&Qt.ShiftModifier):
             self.sendRequested.emit();event.accept();return
         super().keyPressEvent(event)
@@ -154,10 +184,23 @@ class MessageBubbleRow(QWidget):
         sender = QLabel("Siz" if self.outgoing else (message.get("sender_name") or "Telegram"), objectName="messageSender")
         body_text = message.get("text") or "[Medya veya dosya]"
         body = QLabel(body_text, objectName="messageText"); body.setWordWrap(True); body.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        raw_stamp=(message.get("date") or "").replace("T", " ");stamp=raw_stamp.split(" ")[-1][:5] if len(raw_stamp)>10 else raw_stamp[:5]
+        stamp=_format_local_datetime(message.get("date"),"%H:%M")
         footer = QLabel(stamp, objectName="messageTime"); footer.setAlignment(Qt.AlignRight)
         self.body = body; self.sender = sender; self.footer = footer
-        content.addWidget(sender); content.addWidget(body); content.addWidget(footer)
+        content.addWidget(sender)
+        try:reply=json.loads(message.get("reply_json") or "null")
+        except (TypeError,json.JSONDecodeError):reply=None
+        if reply:
+            quote=(reply.get("text") or "[Medya veya dosya]").replace("\n"," ").strip()
+            if len(quote)>140:quote=quote[:137]+"…"
+            self.reply_quote=QLabel(f"↪ {reply.get('sender') or 'Mesaj'}\n{quote}",objectName="replyQuote");self.reply_quote.setWordWrap(True);content.addWidget(self.reply_quote)
+        content.addWidget(body);content.addWidget(footer)
+        reactions=[]
+        try:reactions=json.loads(message.get("reactions_json") or "[]")
+        except (TypeError,json.JSONDecodeError):pass
+        if reactions:
+            self.reactions_label=QLabel("  ".join(f"{r.get('emoji','')} {r.get('count',0)}" for r in reactions if r.get("emoji")),objectName="muted")
+            if self.reactions_label.text():content.addWidget(self.reactions_label)
         if self.outgoing: row.addStretch(1); row.addWidget(self.bubble)
         else: row.addWidget(self.bubble); row.addStretch(1)
     def set_bubble_limit(self, width):
@@ -308,7 +351,7 @@ class InviteLinksDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__();self.setWindowTitle("Akademik Sohbet Yöneticisi");self.setWindowIcon(QIcon(str(APP_DIR/"assets"/"app.ico")));self.resize(1550,950);self.setMinimumSize(1050,650);self.setStyleSheet(_theme_stylesheet(False,"#A90025"))
-        self.store=Store();self.telegram=None;self.bulk=None;self.bulk_task=None;self._allow_close=False;self.dialogs={};self.selected_peer=None;self.reply_to=None;self.current_collection=None;self.active_collection_ids=[];self.active_recipient_ids=[];self.context_mode="none";self._chat_open_generation=0;self.active_nav="chats";self.active_kind="Tümü";self.pending_chat_files=[];self._build();self._load_settings();self.refresh_chats();self.refresh_tree();self.refresh_history();self._update_pending_files()
+        self.store=Store();self.telegram=None;self.bulk=None;self.bulk_task=None;self._allow_close=False;self.dialogs={};self.selected_peer=None;self.reply_to=None;self.reply_context=None;self.current_collection=None;self.active_collection_ids=[];self.active_recipient_ids=[];self.context_mode="none";self._chat_open_generation=0;self.active_nav="chats";self.active_kind="Tümü";self.pending_chat_files=[];self._pasted_clipboard_files=set();self._uploading_clipboard_files=set();self._bulk_pasted_files=set();self._build();self._load_settings();self.refresh_chats();self.refresh_tree();self.refresh_history();self._update_pending_files()
         api_hash=security.get_secret("api_hash");api_id=PREFS.value("telegram/api_id","")
         if api_hash and api_id:QTimer.singleShot(300,lambda:asyncio.create_task(self._reconnect()))
         elif not PREFS.value("onboarding/dismissed",False,type=bool):QTimer.singleShot(600,self._first_run_connect)
@@ -344,8 +387,10 @@ class MainWindow(QMainWindow):
         return f
     def _conversation_panel(self):
         self.conversation=QFrame(objectName="conversation");self.conversation.setMinimumWidth(360);v=QVBoxLayout(self.conversation);v.setContentsMargins(0,0,0,0);v.setSpacing(0);head=QFrame(objectName="chatHeader");h=QHBoxLayout(head);h.setContentsMargins(15,10,15,10);hv=QVBoxLayout();self.chat_title=QLabel("Sohbet seçin",objectName="sectionTitle");self.chat_meta=QLabel("Telegram mesajları burada yüklenecek",objectName="muted");hv.addWidget(self.chat_title);hv.addWidget(self.chat_meta);h.addLayout(hv);h.addStretch();self.message_search=QLineEdit();self.message_search.setPlaceholderText("Bu sohbette ara");self.message_search.setMaximumWidth(250);self.message_search.returnPressed.connect(self.search_messages);h.addWidget(self.message_search);v.addWidget(head)
-        self.older_messages_btn=QPushButton("↑  Önceki mesajları yükle");self.older_messages_btn.setObjectName("olderMessages");self.older_messages_btn.clicked.connect(self.load_older_messages);v.addWidget(self.older_messages_btn,0,Qt.AlignHCenter);self.messages=MessageListWidget();self.messages.itemDoubleClicked.connect(self._message_action);self.messages.setContextMenuPolicy(Qt.CustomContextMenu);self.messages.customContextMenuRequested.connect(self._message_menu);v.addWidget(self.messages,1)
-        compose=QFrame(objectName="compose");compose_v=QVBoxLayout(compose);compose_v.setContentsMargins(12,8,12,8);self.pending_files_label=QLabel("");self.pending_files_label.setObjectName("muted");compose_v.addWidget(self.pending_files_label);ch=QHBoxLayout();ch.setSpacing(8);attach=QPushButton("📎");attach.setToolTip("Dosya ekle");attach.clicked.connect(self.attach_to_chat);ch.addWidget(attach);self.message_input=FileDropTextEdit();self.message_input.send_on_enter=False;self.message_input.setMaximumHeight(90);self.message_input.setPlaceholderText("Mesaj yazın veya dosyaları buraya sürükleyin…");self.message_input.filesDropped.connect(self._add_chat_files);self.message_input.sendRequested.connect(lambda:asyncio.create_task(self.send_message()));ch.addWidget(self.message_input,1);self.clear_attachments=QPushButton("Ekleri kaldır");self.clear_attachments.clicked.connect(self._clear_chat_files);ch.addWidget(self.clear_attachments);send=QPushButton("Gönder");send.setObjectName("primary");send.clicked.connect(self.send_message);ch.addWidget(send);compose_v.addLayout(ch);v.addWidget(compose);return self.conversation
+        self.older_messages_btn=QPushButton("↑  Önceki mesajları yükle");self.older_messages_btn.setObjectName("olderMessages");self.older_messages_btn.clicked.connect(self.load_older_messages);v.addWidget(self.older_messages_btn,0,Qt.AlignHCenter);self.messages=MessageListWidget();self.messages.setContextMenuPolicy(Qt.CustomContextMenu);self.messages.customContextMenuRequested.connect(self._message_menu);v.addWidget(self.messages,1)
+        compose=QFrame(objectName="compose");compose_v=QVBoxLayout(compose);compose_v.setContentsMargins(12,8,12,8)
+        self.reply_preview_frame=QFrame(objectName="replyPreviewFrame");reply_row=QHBoxLayout(self.reply_preview_frame);reply_row.setContentsMargins(10,5,6,5);self.reply_preview=QLabel("");self.reply_preview.setWordWrap(True);reply_row.addWidget(self.reply_preview,1);self.clear_reply_btn=QPushButton("×");self.clear_reply_btn.setFixedWidth(32);self.clear_reply_btn.setToolTip("Yanıtı iptal et");self.clear_reply_btn.clicked.connect(self._clear_reply);reply_row.addWidget(self.clear_reply_btn);self.reply_preview_frame.hide();compose_v.addWidget(self.reply_preview_frame)
+        self.pending_files_label=QLabel("");self.pending_files_label.setObjectName("muted");compose_v.addWidget(self.pending_files_label);ch=QHBoxLayout();ch.setSpacing(8);attach=QPushButton("📎");attach.setToolTip("Dosya ekle");attach.clicked.connect(self.attach_to_chat);ch.addWidget(attach);self.emoji_button=QPushButton("☺");self.emoji_button.setToolTip("Emoji ekle");self.emoji_button.clicked.connect(self._show_emoji_picker);ch.addWidget(self.emoji_button);self.message_input=FileDropTextEdit();self.message_input.send_on_enter=False;self.message_input.setMaximumHeight(90);self.message_input.setPlaceholderText("Mesaj yazın veya dosyaları buraya sürükleyin…");self.message_input.filesDropped.connect(self._add_chat_files);self.message_input.sendRequested.connect(lambda:asyncio.create_task(self.send_message()));ch.addWidget(self.message_input,1);self.clear_attachments=QPushButton("Ekleri kaldır");self.clear_attachments.clicked.connect(self._clear_chat_files);ch.addWidget(self.clear_attachments);send=QPushButton("Gönder");send.setObjectName("primary");send.clicked.connect(self.send_message);ch.addWidget(send);compose_v.addLayout(ch);v.addWidget(compose);return self.conversation
     def _history_page(self):
         p=QWidget();v=QVBoxLayout(p);h=QHBoxLayout();h.addWidget(QLabel("Gönderim geçmişi",objectName="sectionTitle"));h.addStretch();self.retry_btn=QPushButton("Başarısızları yeniden dene");self.retry_btn.clicked.connect(self.retry_failed);h.addWidget(self.retry_btn);self.cancel_history_job_btn=QPushButton("Seçili işi iptal et");self.cancel_history_job_btn.clicked.connect(self.cancel_selected_history_job);h.addWidget(self.cancel_history_job_btn);b=QPushButton("Yenile");b.clicked.connect(self.refresh_history);h.addWidget(b);v.addLayout(h)
         self.history=QTableWidget(0,7);self.history.setHorizontalHeaderLabels(["Tarih","Koleksiyon","Durum","Başarılı","Toplam","Mesaj","Ekler"]);header=self.history.horizontalHeader();header.setSectionResizeMode(QHeaderView.Interactive);header.setStretchLastSection(False);header.setMinimumSectionSize(90);self.history.setColumnWidth(0,170);self.history.setColumnWidth(1,260);self.history.setColumnWidth(2,110);self.history.setColumnWidth(3,90);self.history.setColumnWidth(4,90);self.history.setColumnWidth(5,320);self.history.setColumnWidth(6,200);self.history.setSortingEnabled(True);self.history.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded);self.history.setSelectionBehavior(QAbstractItemView.SelectRows);v.addWidget(self.history,1)
@@ -395,7 +440,8 @@ class MainWindow(QMainWindow):
         if not rows and not self.store.chats(include_hidden=True):
             item=QListWidgetItem("Telegram hesabı bağlı değil\nAyarlar bölümünden hesabınızı bağlayıp sohbetleri eşitleyin.");item.setFlags(Qt.ItemIsEnabled);self.chat_list.addItem(item);self.chat_list.blockSignals(False);return
         for row in rows:
-            title=f"{row['title']}\n{row.get('last_message') or row['kind']} · {row.get('last_message_at') or ''}"
+            stamp=_format_chat_datetime(row.get('last_message_at'))
+            title=f"{row['title']}\n{row.get('last_message') or row['kind']} · {stamp}"
             if row['hidden']:title="◌  "+title
             item=QListWidgetItem(title);item.setData(Qt.UserRole,row['peer_id']);item.setToolTip(row['title']);item.setIcon(self._avatar_icon(row['title']));item.setSizeHint(QSize(0,self._chat_row_height()));self.chat_list.addItem(item)
             peer_id=int(row['peer_id'])
@@ -485,7 +531,7 @@ class MainWindow(QMainWindow):
         self._chat_open_generation+=1;self.context_mode="collection" if len(collection_ids)==1 and not direct_ids else "selection"
         self.selected_peer=None;self.active_collection_ids=collection_ids;self.active_recipient_ids=list(target_map)
         self.current_collection=collection_ids[0] if len(collection_ids)==1 else (owner_ids[0] if owner_ids else None)
-        self.reply_to=None;self._clear_chat_files();self.older_messages_btn.setEnabled(False);self.message_search.setEnabled(False)
+        self._clear_reply();self._clear_chat_files();self.older_messages_btn.setEnabled(False);self.message_search.setEnabled(False)
         if len(collection_ids)==1 and not direct_ids:
             c=next((x for x in self.store.collections() if x['id']==collection_ids[0]),None)
             title=c['name'] if c else "Klasör"
@@ -506,7 +552,7 @@ class MainWindow(QMainWindow):
         if not row:return
         self._chat_open_generation+=1;generation=self._chat_open_generation
         self.context_mode="chat";self.selected_peer=int(peer_id);self.active_collection_ids=[];self.active_recipient_ids=[int(peer_id)];self.current_collection=owner_collection
-        self.reply_to=None;self._clear_chat_files();self.older_messages_btn.setEnabled(True);self.message_search.setEnabled(True)
+        self._clear_reply();self._clear_chat_files();self.older_messages_btn.setEnabled(True);self.message_search.setEnabled(True)
         self.chat_title.setText(row['title']);self.chat_meta.setText(f"{row['kind']} · {row.get('username') or 'Telegram'}")
         self.message_input.send_on_enter=True;self.message_input.setPlaceholderText("Mesaj yazın veya dosyaları buraya sürükleyin… (Enter: gönder, Shift+Enter: yeni satır)");self.messages.clear()
         asyncio.create_task(self._open_telegram_chat(int(peer_id),generation))
@@ -660,11 +706,11 @@ class MainWindow(QMainWindow):
         if len(peers)==1:
             self._activate_chat_context(peers[0]);return
         if self.context_mode=="selection":
-            self._chat_open_generation+=1;self.context_mode="none";self.selected_peer=None;self.active_recipient_ids=[];self.messages.clear();self.chat_title.setText("Sohbet seçin");self.chat_meta.setText("Bir sohbet seçtiğinizde geçmişi burada görünür")
+            self._chat_open_generation+=1;self.context_mode="none";self.selected_peer=None;self.active_recipient_ids=[];self._clear_reply();self.messages.clear();self.chat_title.setText("Sohbet seçin");self.chat_meta.setText("Bir sohbet seçtiğinizde geçmişi burada görünür")
     def _activate_chat_selection(self,peer_ids):
         peers=list(dict.fromkeys(int(peer_id) for peer_id in peer_ids))
         if len(peers)<2:return
-        self._chat_open_generation+=1;self.context_mode="selection";self.selected_peer=None;self.current_collection=None;self.active_collection_ids=[];self.active_recipient_ids=peers;self.reply_to=None;self._clear_chat_files();self.older_messages_btn.setEnabled(False);self.message_search.setEnabled(False)
+        self._chat_open_generation+=1;self.context_mode="selection";self.selected_peer=None;self.current_collection=None;self.active_collection_ids=[];self.active_recipient_ids=peers;self._clear_reply();self._clear_chat_files();self.older_messages_btn.setEnabled(False);self.message_search.setEnabled(False)
         self.chat_title.setText(f"{len(peers)} sohbet seçildi");self.chat_meta.setText("Sağ tıklayarak klasöre ekleyin veya toplu mesaj gönderin")
         self.message_input.send_on_enter=False;self.message_input.setPlaceholderText("Seçili sohbetlere gönderilecek mesaj… (Enter: yeni satır)");self.messages.clear()
     async def _open_telegram_chat(self,peer_id,generation=None):
@@ -676,11 +722,21 @@ class MainWindow(QMainWindow):
             if rows:
                 try:await self.telegram.mark_read(peer_id,rows[-1]['message_id']);self.store.clear_unread(peer_id);self.refresh_chats()
                 except Exception:self.statusBar().showMessage("Okundu durumu Telegram tarafından onaylanmadı",5000)
-    async def load_history(self,peer_id,before=None,generation=None):
+    async def load_history(self,peer_id,before=None,generation=None,reply_context=None):
         if not self.telegram:return
         generation=self._chat_open_generation if generation is None else generation
         try:
-            rows=await self.telegram.history(peer_id,50,before);self.store.cache_messages([{k:r[k] for k in ['peer_id','message_id','sender_id','sender_name','text','date','outgoing','media_json']} for r in rows])
+            rows=await self.telegram.history(peer_id,50,before)
+            known={int(row["message_id"]):row for row in self.store.messages(peer_id,500)}
+            known.update({int(row["message_id"]):row for row in rows})
+            for row in rows:
+                reply_id=row.get("reply_to_message_id")
+                if reply_id is None:continue
+                target=reply_context if reply_context and int(reply_context.get("message_id",-1))==int(reply_id) else known.get(int(reply_id))
+                if target:
+                    row["reply_json"]=json.dumps({"sender":target.get("sender_name") or target.get("sender") or "Mesaj","text":target.get("text") or "[Medya veya dosya]"},ensure_ascii=False)
+                else:row["reply_json"]=json.dumps({"sender":"Yanıtlanan mesaj","text":f"Mesaj #{reply_id}"},ensure_ascii=False)
+            self.store.cache_messages([{k:r.get(k) for k in ['peer_id','message_id','sender_id','sender_name','text','date','outgoing','media_json','reactions_json','reply_json']} for r in rows])
             if generation==self._chat_open_generation and self.context_mode=="chat" and self.selected_peer==peer_id:self._render_messages(peer_id)
         except Exception as e:
             if generation==self._chat_open_generation and self.selected_peer==peer_id:self.statusBar().showMessage(f"Mesaj geçmişi yüklenemedi: {e}",10000)
@@ -696,6 +752,20 @@ class MainWindow(QMainWindow):
         self.messages.scrollToBottom()
     def _append_message_bubble(self,message):
         item=QListWidgetItem();item.setData(Qt.UserRole,message);row=MessageBubbleRow(message);row.set_bubble_limit(max(240,int(self.messages.viewport().width()*.76)));self.messages.addItem(item);self.messages.setItemWidget(item,row);item.setSizeHint(QSize(max(1,self.messages.viewport().width()),row.sizeHint().height()+28))
+    def _set_reply(self,message):
+        self.reply_to=message.get("message_id");self.reply_context={"sender":message.get("sender_name") or "Mesaj","text":message.get("text") or "[Medya veya dosya]"}
+        preview=self.reply_context["text"].replace("\n"," ").strip()
+        if len(preview)>180:preview=preview[:177]+"…"
+        self.reply_preview.setText(f"Yanıtlanıyor: {self.reply_context['sender']}\n{preview}");self.reply_preview_frame.show();self.message_input.setFocus()
+    def _clear_reply(self):
+        self.reply_to=None;self.reply_context=None
+        if hasattr(self,"reply_preview_frame"):self.reply_preview_frame.hide();self.reply_preview.clear()
+    def _show_emoji_picker(self):
+        menu=QMenu(self.emoji_button)
+        emojis=["😀","😃","😄","😁","😅","😂","🙂","😉","😊","😍","🥰","😘","😎","🤔","🙃","😭","😢","😡","👍","👎","👏","🙏","❤️","🔥","🎉","✅","📌","💯"]
+        for emoji in emojis:
+            action=menu.addAction(emoji);action.triggered.connect(lambda checked=False,value=emoji:self.message_input.insertPlainText(value))
+        menu.exec(self.emoji_button.mapToGlobal(self.emoji_button.rect().bottomLeft()))
     @asyncSlot()
     async def send_message(self):
         if not self.telegram or not self.telegram.client or not self.telegram.client.is_connected():QMessageBox.information(self,"Telegram bağlı değil","Mesaj göndermek için Telegram hesabını bağlayın.");return
@@ -704,24 +774,46 @@ class MainWindow(QMainWindow):
         if self.context_mode in ("collection","selection"):
             self._start_bulk(collection_ids=self.active_collection_ids,direct_peer_ids=self.active_recipient_ids,preserve_view=True,initial_message=text,initial_files=list(self.pending_chat_files));return
         if self.context_mode!="chat" or self.selected_peer is None:QMessageBox.information(self,"Sohbet seçin","Önce bir Telegram sohbeti veya klasör seçin.");return
-        peer_id=self.selected_peer;generation=self._chat_open_generation;files=list(self.pending_chat_files)
+        peer_id=self.selected_peer;generation=self._chat_open_generation;files=list(self.pending_chat_files);sent_reply_context={**self.reply_context,"message_id":self.reply_to} if self.reply_context else None
+        uploaded=False
+        if files:self._uploading_clipboard_files.update(p for p in files if p in self._pasted_clipboard_files)
         try:
             if files:await self.telegram.send_files(peer_id,files,caption=text,progress_callback=self._upload_progress,reply_to=self.reply_to)
             else:await self.telegram.send_text(peer_id,text,reply_to=self.reply_to)
+            uploaded=True
             if generation!=self._chat_open_generation or self.selected_peer!=peer_id:return
-            self.message_input.clear();self.pending_chat_files.clear();self.reply_to=None;self.message_input.setPlaceholderText("Mesaj yazın veya dosyaları buraya sürükleyin…");self._update_pending_files();await self.load_history(peer_id,generation=generation)
+            self.message_input.clear();self._clear_chat_files();self._clear_reply();self.message_input.setPlaceholderText("Mesaj yazın veya dosyaları buraya sürükleyin…");await self.load_history(peer_id,generation=generation,reply_context=sent_reply_context)
         except Exception as e:QMessageBox.warning(self,"Mesaj gönderilemedi",str(e))
+        finally:
+            pasted={p for p in files if p in self._pasted_clipboard_files}
+            self._uploading_clipboard_files.difference_update(pasted)
+            discarded=pasted if uploaded else {p for p in pasted if p not in self.pending_chat_files}
+            self._discard_pasted_files(discarded)
     def attach_to_chat(self):
         if not self.telegram or self.selected_peer is None:QMessageBox.information(self,"Sohbet seçin","Telegram bağlantısı ve sohbet seçimi gerekli.");return
         paths,_=QFileDialog.getOpenFileNames(self,"Dosya veya medya ekle");self._add_chat_files(paths)
     def _add_chat_files(self,paths):
         for path in paths:
-            if Path(path).is_file() and path not in self.pending_chat_files:self.pending_chat_files.append(path)
+            if Path(path).is_file() and path not in self.pending_chat_files:
+                self.pending_chat_files.append(path)
+                if Path(path).parent==app_data_dir()/"clipboard_images":self._pasted_clipboard_files.add(path)
         self._update_pending_files()
     def _update_pending_files(self):
         if hasattr(self,"pending_files_label"):
             names=[Path(p).name for p in self.pending_chat_files];self.pending_files_label.setText(("Ekler: "+" · ".join(names)) if names else "");self.clear_attachments.setEnabled(bool(names))
-    def _clear_chat_files(self):self.pending_chat_files.clear();self._update_pending_files()
+    def _clear_chat_files(self):
+        self.pending_chat_files.clear()
+        for path in tuple(self._pasted_clipboard_files):
+            if path in self._uploading_clipboard_files or path in self._bulk_pasted_files:continue
+            try:Path(path).unlink(missing_ok=True)
+            except OSError:pass
+            self._pasted_clipboard_files.discard(path)
+        self._update_pending_files()
+    def _discard_pasted_files(self,paths):
+        for path in paths:
+            try:Path(path).unlink(missing_ok=True)
+            except OSError:pass
+            self._pasted_clipboard_files.discard(path)
     def _upload_progress(self,current,total):
         self.statusBar().showMessage(f"Dosya yükleniyor: {int(100*current/max(total,1))}%")
     def _message_menu(self,pos):
@@ -736,15 +828,26 @@ class MainWindow(QMainWindow):
             menu=QMenu(self.messages);remove=menu.addAction("Bu klasörden çıkar");chosen=menu.exec(self.messages.mapToGlobal(pos))
             if chosen==remove and self.current_collection:self.store.remove_chat_from_collection(self.current_collection,m['peer_id']);self._collection_selected(self.tree.currentItem());self.refresh_tree()
             return
-        menu=QMenu(self.messages);reply=menu.addAction("Yanıtla");copy=menu.addAction("Metni kopyala");download=menu.addAction("Dosyayı indir…") if m.get('media_json') else None;edit=menu.addAction("Mesajı düzenle") if m['outgoing'] else None;delete=menu.addAction("Mesajı sil") if m['outgoing'] else None;chosen=menu.exec(self.messages.mapToGlobal(pos))
-        if chosen==reply:self.reply_to=m['message_id'];self.message_input.setPlaceholderText(f"{m['sender_name'] or 'Mesaj'} yanıtlanıyor…");self.message_input.setFocus()
-        elif chosen==copy:QApplication.clipboard().setText(m['text'])
-        elif chosen==download:asyncio.create_task(self._download_message(m))
-        elif chosen==edit:
+        menu=QMenu(self.messages);reply=menu.addAction("Yanıtla");copy=menu.addAction("Metni kopyala")
+        reaction_menu=menu.addMenu("Tepki bırak")
+        for emoji in ["👍","❤️","😂","😮","😢","🙏","🔥","🎉"]:
+            reaction_action=reaction_menu.addAction(emoji);reaction_action.triggered.connect(lambda checked=False,value=emoji,target=m:asyncio.create_task(self._react_to_message(target,value)))
+        download=menu.addAction("Dosyayı indir…") if m.get('media_json') else None;edit=menu.addAction("Mesajı düzenle") if m['outgoing'] else None;delete=menu.addAction("Mesajı sil") if m['outgoing'] else None;chosen=menu.exec(self.messages.mapToGlobal(pos))
+        # A dismissed menu returns None. Never let None compare equal to an
+        # unavailable action (also None), which previously opened a fake download.
+        if chosen is None:return
+        if chosen is reply:self._set_reply(m)
+        elif chosen is copy:QApplication.clipboard().setText(m.get('text') or "")
+        elif download is not None and chosen is download:asyncio.create_task(self._download_message(m))
+        elif edit is not None and chosen is edit:
             text,ok=QInputDialog.getMultiLineText(self,"Mesajı düzenle","Metin:",m['text'])
             if ok:asyncio.create_task(self._edit_message(m,text))
-        elif chosen==delete and QMessageBox.question(self,"Mesajı sil","Telegram'dan da silinsin mi?",QMessageBox.Yes|QMessageBox.No)==QMessageBox.Yes:asyncio.create_task(self._delete_message(m))
-    def _message_action(self,item):self._message_menu(self.messages.visualItemRect(item).center())
+        elif delete is not None and chosen is delete and QMessageBox.question(self,"Mesajı sil","Telegram'dan da silinsin mi?",QMessageBox.Yes|QMessageBox.No)==QMessageBox.Yes:asyncio.create_task(self._delete_message(m))
+    async def _react_to_message(self,message,emoji):
+        try:
+            await self.telegram.send_reaction(message['peer_id'],message['message_id'],emoji)
+            await self.load_history(message['peer_id']);self.statusBar().showMessage(f"{emoji} tepkisi eklendi",4000)
+        except Exception as e:QMessageBox.warning(self,"Tepki gönderilemedi",str(e))
     async def _download_message(self,m):
         try:default_name=json.loads(m.get('media_json') or '{}').get('name') or "telegram_file"
         except (TypeError,json.JSONDecodeError):default_name="telegram_file"
@@ -769,7 +872,11 @@ class MainWindow(QMainWindow):
             self.messages.clear()
             for m in reversed(rows):
                 file_obj=getattr(m,"file",None);file_name=getattr(file_obj,"name",None)
-                self._append_message_bubble({"peer_id":self.selected_peer,"message_id":m.id,"sender_id":getattr(m,"sender_id",None),"sender_name":"Siz" if m.out else str(getattr(m,"sender_id",None) or "Telegram"),"text":m.message or "","date":m.date.isoformat() if m.date else "","outgoing":int(bool(m.out)),"media_json":json.dumps({"name":file_name}) if file_name else None})
+                reactions=[]
+                for item in getattr(getattr(m,"reactions",None),"results",[]) or []:
+                    emoji=getattr(getattr(item,"reaction",None),"emoticon",None)
+                    if emoji:reactions.append({"emoji":emoji,"count":int(getattr(item,"count",0) or 0),"chosen":bool(getattr(item,"chosen",False))})
+                self._append_message_bubble({"peer_id":self.selected_peer,"message_id":m.id,"sender_id":getattr(m,"sender_id",None),"sender_name":"Siz" if m.out else str(getattr(m,"sender_id",None) or "Telegram"),"text":m.message or "","date":m.date.isoformat() if m.date else "","outgoing":int(bool(m.out)),"media_json":json.dumps({"name":file_name}) if file_name else None,"reactions_json":json.dumps(reactions,ensure_ascii=False)})
         except Exception as e:QMessageBox.warning(self,"Arama başarısız",str(e))
     def start_bulk(self,cid=None):
         cid=cid if cid is not None else self.bulk_collection_combo.currentData()
@@ -793,11 +900,12 @@ class MainWindow(QMainWindow):
         dlg=BulkPreviewDialog(collection,targets,self,initial_message,initial_files)
         if dlg.exec()!=QDialog.Accepted:return
         try:
+            self._bulk_pasted_files.update(path for path in dlg.files if path in self._pasted_clipboard_files)
             primary=collection_ids[0] if collection_ids else None
             sender=BulkSender(self.store,self.telegram);job=sender.prepare_job(primary,dlg.message.toPlainText(),dlg.files,dlg.selected_targets,collection_ids=collection_ids);self.bulk=sender;self.refresh_history()
             if preserve_view:
                 if collection_ids:self._render_collection_history()
-                self.message_input.clear();self.pending_chat_files.clear();self.reply_to=None;self._update_pending_files();self.message_input.setPlaceholderText("Seçili klasör ve sohbetlere gönderilecek mesaj…")
+                self.message_input.clear();self._clear_chat_files();self._clear_reply();self.message_input.setPlaceholderText("Seçili klasör ve sohbetlere gönderilecek mesaj…")
             else:self.navigate("history")
             self.bulk_task=asyncio.create_task(self._run_bulk(job,dlg.selected_targets,dlg.message.toPlainText(),dlg.files,preserve_view))
         except Exception as e:QMessageBox.warning(self,"Gönderim hazırlanamadı",str(e))
@@ -817,7 +925,7 @@ class MainWindow(QMainWindow):
             try:files=json.loads(j.get('files_json') or '[]')
             except (TypeError,json.JSONDecodeError):files=[]
             message=j.get('message') or "(Yalnızca ek gönderildi)";attachment_names=" · ".join(Path(path).name for path in files) or "—"
-            values=[j['created_at'],coll,j['status'],j['sent'] or 0,j['total'] or 0,message,attachment_names]
+            values=[_format_local_datetime(j['created_at']),coll,j['status'],j['sent'] or 0,j['total'] or 0,message,attachment_names]
             for col,val in enumerate(values):
                 item=HistoryTableItem(val,j['id'])
                 if col==6 and files:item.setToolTip("\n".join(files))
