@@ -836,13 +836,13 @@ class MainWindow(QMainWindow):
         # A dismissed menu returns None. Never let None compare equal to an
         # unavailable action (also None), which previously opened a fake download.
         if chosen is None:return
-        if chosen is reply:self._set_reply(m)
-        elif chosen is copy:QApplication.clipboard().setText(m.get('text') or "")
-        elif download is not None and chosen is download:asyncio.create_task(self._download_message(m))
-        elif edit is not None and chosen is edit:
+        if chosen==reply:self._set_reply(m)
+        elif chosen==copy:QApplication.clipboard().setText(m.get('text') or "")
+        elif download is not None and chosen==download:asyncio.create_task(self._download_message(m))
+        elif edit is not None and chosen==edit:
             text,ok=QInputDialog.getMultiLineText(self,"Mesajı düzenle","Metin:",m['text'])
             if ok:asyncio.create_task(self._edit_message(m,text))
-        elif delete is not None and chosen is delete and QMessageBox.question(self,"Mesajı sil","Telegram'dan da silinsin mi?",QMessageBox.Yes|QMessageBox.No)==QMessageBox.Yes:asyncio.create_task(self._delete_message(m))
+        elif delete is not None and chosen==delete and QMessageBox.question(self,"Mesajı sil","Telegram'dan da silinsin mi?",QMessageBox.Yes|QMessageBox.No)==QMessageBox.Yes:asyncio.create_task(self._delete_message(m))
     async def _react_to_message(self,message,emoji):
         try:
             await self.telegram.send_reaction(message['peer_id'],message['message_id'],emoji)
