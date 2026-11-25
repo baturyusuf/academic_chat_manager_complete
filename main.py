@@ -1027,7 +1027,7 @@ class MainWindow(QMainWindow):
                     row.set_reactions(reactions)
                     row.set_bubble_limit(max(240,int(self.messages.viewport().width()*.76)))
                     item.setSizeHint(QSize(max(1,self.messages.viewport().width()),row.sizeHint().height()+28))
-        status={"added":"eklendi","removed":"kaldırıldı","replaced":"değiştirildi"}[outcome]
+        status={"added":"eklendi","removed":"kaldırıldı","replaced":"değiştirildi","unchanged":"zaten güncel"}[outcome]
         self.statusBar().showMessage(f"{emoji} tepkisi {status}"+(" · Görünüm güncellenemedi" if reactions is None else ""),5000)
     async def _download_message(self,m):
         if not self.telegram or not self.telegram.client or not self.telegram.client.is_connected():
