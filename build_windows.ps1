@@ -48,7 +48,13 @@ try {
 
     Invoke-Checked $VenvPython @('-m', 'pip', 'install', '--upgrade', 'pip')
     Invoke-Checked $VenvPython @('-m', 'pip', 'install', '-r', 'requirements-dev.txt')
-    Invoke-Checked $VenvPython @('-m', 'PyInstaller', '--noconfirm', '--clean', 'AcademicChatManager.spec')
+    Invoke-Checked $VenvPython @(
+        '-m', 'PyInstaller', '--noconfirm', '--clean', '--onedir', '--windowed',
+        '--name', 'AkademikSohbetYoneticisi', '--icon', 'assets\app.ico',
+        '--add-data', 'assets\rumeli_logo.png;assets', '--add-data', 'assets\app.ico;assets',
+        '--collect-submodules', 'telethon', '--collect-submodules', 'keyring.backends',
+        '--collect-data', 'certifi', 'main.py'
+    )
     Invoke-Checked $VenvPython @(
         '-m', 'PyInstaller', '--noconfirm', '--clean', '--onefile', '--windowed',
         '--name', 'AkademikSohbetYoneticisi-OneFile', '--icon', 'assets\app.ico',
