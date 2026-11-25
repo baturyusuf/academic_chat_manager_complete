@@ -3,13 +3,14 @@ import asyncio, json, mimetypes, os, sys, traceback, uuid
 from pathlib import Path
 from telethon.errors import FloodWaitError
 from functools import lru_cache
+from tempfile import TemporaryDirectory
 from time import monotonic
 import certifi
 if os.name=="nt" or not os.environ.get("SSL_CERT_FILE") or not Path(os.environ["SSL_CERT_FILE"]).is_file():
     os.environ["SSL_CERT_FILE"]=certifi.where()
 from datetime import datetime, timezone
 from PySide6.QtCore import Qt, QSettings, QSize, QRect, Signal, QMimeData, QTimer, QItemSelectionModel, QByteArray, QEvent, QPoint
-from PySide6.QtGui import QAction, QFont, QPixmap, QColor, QDrag, QIcon, QPalette, QKeySequence, QShortcut, QPainter, QPainterPath
+from PySide6.QtGui import QAction, QFont, QImageReader, QPixmap, QColor, QDrag, QIcon, QPalette, QKeySequence, QShortcut, QPainter, QPainterPath
 from PySide6.QtWidgets import *
 from PySide6.QtSvg import QSvgRenderer
 from qasync import QEventLoop, asyncSlot
@@ -270,16 +271,50 @@ class ClickableImagePreview(QLabel):
 class FullScreenImageDialog(QDialog):
     downloadRequested=Signal(dict)
     def __init__(self,pixmap,request,parent=None):
-        super().__init__(parent);self.original=pixmap;self.request=request;self.setWindowTitle("Görsel önizlemesi");self.setWindowFlags(Qt.Dialog|Qt.FramelessWindowHint)
+        super().__init__(parent)
+        self.original = pixmap
+        self.request = request
+        self.setWindowTitle("Görsel önizlemesi")
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
         self.setStyleSheet("QDialog { background: #0b1017; } QLabel { color: #e8edf5; }")
-        root=QVBoxLayout(self);root.setContentsMargins(12,8,12,10);root.setSpacing(6)
-        top=QHBoxLayout();top.addWidget(QLabel(safe_filename(decode_media(request.get("media_json"))['name'])));top.addStretch();close=QPushButton("Kapat  ×");close.clicked.connect(self.accept);top.addWidget(close);root.addLayout(top)
-        self.image=QLabel();self.image.setAlignment(Qt.AlignCenter);self.image.setMinimumSize(320,240);root.addWidget(self.image,1)
-        actions=QHBoxLayout();actions.addStretch();self.download_button=QPushButton("Görseli indir…");self.download_button.setObjectName("primary");self.download_button.clicked.connect(self._download);actions.addWidget(self.download_button);root.addLayout(actions)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 8, 12, 10)
+        root.setSpacing(6)
+        top = QHBoxLayout()
+        top.addWidget(QLabel(safe_filename(decode_media(request["media_json"])["name"])))
+        top.addStretch()
+        close = QPushButton("Kapat  ×")
+        close.clicked.connect(self.reject)
+        top.addWidget(close)
+        root.addLayout(top)
+        self.image = QLabel()
+        self.image.setAlignment(Qt.AlignCenter)
+        self.image.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        root.addWidget(self.image, 1)
+        actions = QHBoxLayout()
+        self.load_status = QLabel("Tam çözünürlüklü görsel yükleniyor…")
+        actions.addWidget(self.load_status)
+        actions.addStretch()
+        self.download_button = QPushButton("Görseli indir…")
+        self.download_button.setObjectName("primary")
+        self.download_button.clicked.connect(self._download)
+        actions.addWidget(self.download_button)
+        root.addLayout(actions)
         self._scale_image()
+
+    def set_full_resolution(self, image):
+        self.original = QPixmap.fromImage(image)
+        self.load_status.setText("")
+        self._scale_image()
+
     def _scale_image(self):
-        if self.original and not self.original.isNull() and self.image.size().isValid():
-            self.image.setPixmap(self.original.scaled(self.image.size(),Qt.KeepAspectRatio,Qt.SmoothTransformation))
+        if self.original.isNull() or self.image.size().isEmpty():
+            return
+        ratio = self.image.devicePixelRatioF()
+        pixmap = self.original.scaled(self.image.size() * ratio, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        pixmap.setDevicePixelRatio(ratio)
+        self.image.setPixmap(pixmap)
+
     def resizeEvent(self,event):
         super().resizeEvent(event);self._scale_image()
     def _download(self):
@@ -545,6 +580,7 @@ class InviteLinksDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__();self.setWindowTitle("Akademik Sohbet Yöneticisi");self.setWindowIcon(QIcon(str(APP_DIR/"assets"/"app.ico")));self.resize(1550,950);self.setMinimumSize(1050,650);self.setStyleSheet(_theme_stylesheet(False,"#A90025"))
+        self._fullscreen_preview = None
         self.store=Store();self.telegram=None;self.bulk=None;self.bulk_task=None;self._allow_close=False;self.dialogs={};self._avatar_cache={};self._avatar_loading=set();self._image_preview_cache={};self._image_preview_tasks={};self._preview_scan_queued=False;self._last_notification_at=float("-inf");self._suppressed_notifications=0;self.selected_peer=None;self.reply_to=None;self.reply_context=None;self.current_collection=None;self.active_collection_ids=[];self.active_recipient_ids=[];self.context_mode="none";self._chat_open_generation=0;self.active_nav="chats";self.active_kind="Tümü";self.pending_chat_files=[];self._pasted_clipboard_files=set();self._uploading_clipboard_files=set();self._bulk_pasted_files=set();self._build();self._load_settings();self.refresh_chats();self.refresh_tree();self.refresh_history();self._update_pending_files()
         api_hash=security.get_secret("api_hash");api_id=PREFS.value("telegram/api_id","")
         if api_hash and api_id:QTimer.singleShot(300,lambda:asyncio.create_task(self._reconnect()))
@@ -1155,7 +1191,7 @@ class MainWindow(QMainWindow):
             request=preview.property("mediaRequest")
             if not request or self._preview_key(request)!=key:continue
             if isinstance(result,QPixmap):
-                preview.setPixmap(result);preview.setText("");preview.setProperty("mediaLoaded",True)
+                preview.setPixmap(result);preview.setProperty("mediaLoaded",True)
                 preview.setToolTip("Görsel önizlemesi · dosyayı kaydetmek için ekin indirme düğmesini kullanın")
             else:preview.setText(str(result))
 
@@ -1179,13 +1215,56 @@ class MainWindow(QMainWindow):
         while len(self._image_preview_cache)>64:self._image_preview_cache.pop(next(iter(self._image_preview_cache)))
         self._set_image_preview_labels(key,result)
 
-    def _show_fullscreen_preview(self,preview,request):
-        pixmap=preview.pixmap()
-        if pixmap is None or pixmap.isNull():
-            self.statusBar().showMessage("Görsel önizlemesi henüz hazır değil",3000);return
-        dialog=FullScreenImageDialog(pixmap,request,self)
-        dialog.downloadRequested.connect(lambda target:asyncio.create_task(self._download_message(target)))
-        dialog.setWindowState(dialog.windowState()|Qt.WindowFullScreen);dialog.exec()
+    def _show_fullscreen_preview(self, preview, request):
+        if self._fullscreen_preview is not None:
+            return
+        dialog = FullScreenImageDialog(preview.pixmap(), request, self)
+        self._fullscreen_preview = dialog
+        dialog.setModal(True)
+        dialog.setAttribute(Qt.WA_DeleteOnClose)
+        dialog.downloadRequested.connect(lambda target: asyncio.create_task(self._download_message(target)))
+        service = self.telegram
+        task = None
+        if service and service.client and service.client.is_connected():
+            task = asyncio.create_task(self._load_fullscreen_image(dialog, service, request))
+        else:
+            dialog.load_status.setText("Tam çözünürlük için Telegram’a bağlanın.")
+
+        def close_preview():
+            self._fullscreen_preview = None
+            if task and not task.done():
+                task.cancel()
+
+        dialog.finished.connect(close_preview)
+        dialog.showFullScreen()
+
+    async def _load_fullscreen_image(self, dialog, service, request):
+        def read_image(path):
+            reader = QImageReader(str(path))
+            reader.setAutoTransform(True)
+            return reader.read()
+
+        try:
+            with TemporaryDirectory(prefix="acm-image-") as directory:
+                path = Path(directory) / "image"
+                await service.download_media(*self._preview_key(request), path)
+                decoding = asyncio.create_task(asyncio.to_thread(read_image, path))
+                try:
+                    image = await asyncio.shield(decoding)
+                except asyncio.CancelledError:
+                    # Let the decoder close the file before Windows removes it.
+                    await decoding
+                    raise
+            if image.isNull() or self.telegram is not service:
+                raise ValueError("Tam çözünürlüklü görsel açılamadı")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            if self._fullscreen_preview is dialog:
+                dialog.load_status.setText("Tam çözünürlüklü görsel yüklenemedi.")
+        else:
+            if self._fullscreen_preview is dialog:
+                dialog.set_full_resolution(image)
 
     def _set_reply(self,message):
         self.reply_to=message.get("message_id");self.reply_context={"sender":message.get("sender_name") or "Mesaj","text":message.get("text") or "[Medya veya dosya]"}
@@ -1717,6 +1796,8 @@ class MainWindow(QMainWindow):
             answer=QMessageBox.question(self,"Gönderim sürüyor","Uygulamayı kapatıp bekleyen alıcıları iptal etmek istiyor musunuz? Gönderilmiş mesajlar geri alınamaz.",QMessageBox.Yes|QMessageBox.No)
             if answer!=QMessageBox.Yes:event.ignore();return
             self.bulk.cancel()
+        if self._fullscreen_preview is not None:
+            self._fullscreen_preview.reject()
         if self.telegram:
             event.ignore();asyncio.create_task(self._shutdown());return
         self._cancel_image_preview_tasks();self.store.set_preference('appearance/credit',self.credit_check.isChecked());super().closeEvent(event)

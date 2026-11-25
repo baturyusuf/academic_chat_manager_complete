@@ -289,27 +289,70 @@ def test_private_and_group_bubbles_follow_telegram_sender_and_receipt_rules():
     assert private_avatar.sender.isHidden() and hasattr(private_avatar,"sender_avatar")
     assert sent.ticks.text()=="✓" and read.ticks.text()=="✓✓"
 
-def test_image_preview_opens_fullscreen_without_automatically_downloading(tmp_path,monkeypatch):
+async def test_image_preview_fetches_the_full_file_for_fullscreen(tmp_path,monkeypatch):
+    from pathlib import Path
+    from types import SimpleNamespace
+
     from academic_chat_manager import main
     app=QApplication.instance() or QApplication([])
     monkeypatch.setattr(main,"Store",lambda:__import__('academic_chat_manager.storage',fromlist=['Store']).Store(tmp_path/"image-preview.sqlite3"))
     main.PREFS.setValue("onboarding/dismissed",True)
-    w=MainWindow();request={"peer_id":-17,"message_id":21,"media_json":'{"name":"foto.jpg","size":2048,"mime_type":"image/jpeg"}'}
+    w=MainWindow();request={"peer_id":-17,"message_id":21,"media_json":'{"name":"foto.png","size":16777216,"mime_type":"image/png"}'}
     item=main.QListWidgetItem();w.messages.addItem(item);w._set_message_bubble(item,{**request,"text":"","outgoing":0,"chat_kind":"Kişi"})
     preview=w.messages.itemWidget(item).findChild(main.QLabel,"imagePreview")
-    image=QImage(32,24,QImage.Format_ARGB32);image.fill(QColor("#4477aa"));pixmap=main.QPixmap.fromImage(image);preview.setPixmap(pixmap);preview.setText("")
-    opened=[]
-    def capture_preview(dialog):
-        opened.append((dialog.original,dialog.request,dialog.parent()))
-        return main.QDialog.Rejected
-    # The actual dialog is exercised by its separate widget tests; this captures
-    # the preview click path and proves that only its explicit download action
-    # can emit a download request.
-    monkeypatch.setattr(main.FullScreenImageDialog,"exec",capture_preview)
-    downloads=[];w._download_message=lambda target:downloads.append(target)
-    preview.clicked.emit()
-    assert opened and opened[0][1]["peer_id"]==request["peer_id"] and opened[0][1]["message_id"]==request["message_id"] and downloads==[]
-    w.close()
+    image=QImage(1600,1200,QImage.Format_ARGB32);image.fill(QColor("#4477aa"))
+    thumbnail=main.QPixmap.fromImage(image.scaled(32,24))
+    preview.setPixmap(thumbnail)
+    transfers=[]
+    saves=[]
+    started=asyncio.Event()
+    allow_transfer=asyncio.Event()
+
+    async def download_media(peer_id,message_id,destination):
+        transfers.append((peer_id,message_id,Path(destination),asyncio.current_task()))
+        started.set()
+        await allow_transfer.wait()
+        assert image.save(str(destination),"PNG")
+        return str(destination)
+
+    async def save_message(target):
+        saves.append(target)
+
+    w.telegram=SimpleNamespace(client=SimpleNamespace(is_connected=lambda:True),download_media=download_media)
+    monkeypatch.setattr(w,"_download_message",save_message)
+    try:
+        preview.clicked.emit()
+        dialog=w._fullscreen_preview
+        assert dialog.isFullScreen() and dialog.original.size()==thumbnail.size()
+        await asyncio.wait_for(started.wait(),5)
+        assert len(transfers)==1 and transfers[0][:2]==(-17,21)
+        assert saves==[]
+        _,_,path,task=transfers[0]
+        allow_transfer.set()
+        await asyncio.wait_for(task,5)
+        assert dialog.original.size()==image.size()
+        assert not dialog.image.pixmap().isNull()
+        assert preview.pixmap().size()==thumbnail.size()
+        assert not path.parent.exists() and saves==[]
+        dialog.download_button.click()
+        await asyncio.sleep(0)
+        assert len(saves)==1 and saves[0]["message_id"]==21
+        assert w._fullscreen_preview is None
+
+        # The full file can be requested even if the chat thumbnail is unavailable.
+        preview.clear()
+        started.clear()
+        allow_transfer.clear()
+        preview.clicked.emit()
+        await asyncio.wait_for(started.wait(),5)
+        _,_,path,task=transfers[-1]
+        w._fullscreen_preview.reject()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert w._fullscreen_preview is None and not path.parent.exists()
+    finally:
+        w.telegram=None
+        w.close()
 
 def test_folder_rename_uses_clicked_folder_even_with_other_rows_selected(tmp_path,monkeypatch):
     from academic_chat_manager import main
