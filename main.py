@@ -1,13 +1,15 @@
 from __future__ import annotations
 import asyncio, json, mimetypes, os, sys, traceback, uuid
 from pathlib import Path
+from functools import lru_cache
 import certifi
 if os.name=="nt" or not os.environ.get("SSL_CERT_FILE") or not Path(os.environ["SSL_CERT_FILE"]).is_file():
     os.environ["SSL_CERT_FILE"]=certifi.where()
 from datetime import datetime, timezone
-from PySide6.QtCore import Qt, QSettings, QSize, QRect, Signal, QMimeData, QTimer, QItemSelectionModel
+from PySide6.QtCore import Qt, QSettings, QSize, QRect, Signal, QMimeData, QTimer, QItemSelectionModel, QByteArray
 from PySide6.QtGui import QAction, QFont, QPixmap, QColor, QDrag, QIcon, QPalette, QKeySequence, QShortcut, QPainter
 from PySide6.QtWidgets import *
+from PySide6.QtSvg import QSvgRenderer
 from qasync import QEventLoop, asyncSlot
 try:  # package import for tests; direct imports for the frozen desktop entry point
     from .storage import Store, app_data_dir
@@ -24,10 +26,62 @@ APP_DIR=Path(__file__).parent
 PREFS=QSettings("RumeliAcademic","AcademicChatManager")
 TREE_NODE_KIND_ROLE=Qt.UserRole+1
 TREE_OWNER_COLLECTION_ROLE=Qt.UserRole+2
+TREE_ICON_ROLE=Qt.UserRole+3
 def _mix_color(foreground: str, background: str, amount: float) -> str:
     fg, bg = QColor(foreground), QColor(background)
     channels = [round(bg.getRgb()[i] * (1 - amount) + fg.getRgb()[i] * amount) for i in range(3)]
     return QColor(*channels).name()
+
+# Original 24-unit line icons, rendered as DPI-aware Qt pixmaps.
+_ICON_PATHS = {
+    "chats": "M4 4H20V16H10L4 21Z",
+    "folders": "M3 6H10L12 8H21V19H3Z",
+    "bulk": "M3 4L21 12L3 20L7 12L3 4ZM7 12H21",
+    "history": "M12 3A9 9 0 1 1 3 12A9 9 0 0 1 12 3ZM12 7V12L16 15",
+    "filters": "M3 4H21L14 12V19L10 21V12Z",
+    "settings": "M4 6H20M4 12H20M4 18H20M8 3V9M16 9V15M10 15V21",
+    "plus": "M12 4V20M4 12H20",
+    "up": "M12 20V4M5 11L12 4L19 11",
+    "close": "M6 6L18 18M18 6L6 18",
+    "attach": "M8 13L14 7A3 3 0 0 1 18 11L10 19A5 5 0 0 1 3 12L13 2M8 13A1 1 0 0 0 10 15L16 9",
+    "emoji": "M12 3A9 9 0 1 1 3 12A9 9 0 0 1 12 3ZM8 9H8.1M16 9H16.1M8 14Q12 18 16 14",
+    "refresh": "M20 10A8 8 0 1 0 19 17M20 3V10H13",
+    "image": "M3 4H21V20H3ZM3 16L9 10L15 16L18 13L21 16M16 8H16.1",
+    "copy": "M8 8H21V21H8ZM16 8V3H3V16H8",
+    "check": "M4 12L10 18L20 6",
+    "eye": "M2 12Q12 -1 22 12Q12 25 2 12ZM12 9A3 3 0 1 1 9 12A3 3 0 0 1 12 9",
+    "eye-off": "M3 3L21 21M2 12Q5 7 8 6M11 5Q17 4 22 12Q20 15 17 17M13 19Q7 20 2 12",
+}
+
+def _icon_size(font_size):
+    return max(16, min(28, round(font_size * 18 / 13)))
+
+@lru_cache(maxsize=256)
+def _line_icon(name, color, size, disabled_color, selected_color):
+    icon = QIcon()
+    for mode, stroke in ((QIcon.Normal, color), (QIcon.Active, color),
+                         (QIcon.Disabled, disabled_color), (QIcon.Selected, selected_color)):
+        svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="{_ICON_PATHS[name]}" fill="none" stroke="{stroke}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+        renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
+        for scale in (1, 2, 3):
+            pixmap = QPixmap(size * scale, size * scale)
+            pixmap.fill(Qt.transparent)
+            painter = QPainter(pixmap)
+            renderer.render(painter)
+            painter.end()
+            pixmap.setDevicePixelRatio(scale)
+            icon.addPixmap(pixmap, mode)
+    return icon
+
+def _icon_button(name, text="", tooltip=""):
+    button = QPushButton(text)
+    button.setProperty("uiIcon", name)
+    if tooltip:
+        button.setToolTip(tooltip)
+        button.setAccessibleName(tooltip)
+    if not text:
+        button.setObjectName("iconOnly")
+    return button
 
 def _local_datetime(value):
     """Parse Telegram/SQLite UTC timestamps and convert them to the computer's zone."""
@@ -79,6 +133,8 @@ def _theme_stylesheet(dark: bool, accent: str) -> str:
     QLabel#brandSubtitle,QLabel#muted{{color:{c['muted']}}}
     QPushButton{{border:0;border-radius:9px;background:transparent;padding:8px 11px;text-align:left;color:{c['text']}}}
     QPushButton:hover{{background:{c['hover']}}}
+    QPushButton#iconOnly{{text-align:center;padding:7px;border:1px solid transparent}}
+    QPushButton#iconOnly:focus{{border-color:{highlight}}}
     QPushButton[active="true"],QPushButton#primary,QPushButton#primary:checked{{background:{accent};color:{accent_text};font-weight:600}}
     QPushButton#primary:hover{{background:{_mix_color(accent, '#000000' if dark else '#ffffff', .88)}}}
     QPushButton#clearAttachments{{background:transparent;color:{danger};border:1px solid {_mix_color(danger, c['border'], .55)};border-radius:9px;padding:7px 10px;text-align:center;font-weight:600}}
@@ -377,8 +433,8 @@ class MainWindow(QMainWindow):
     def _sidebar(self):
         f=QFrame(objectName="sidebar");f.setMinimumWidth(150);f.setMaximumWidth(360);v=QVBoxLayout(f);v.setContentsMargins(9,10,9,8)
         self.nav={}
-        for text,icon,key in [("Sohbetler","◉","chats"),("Klasörler","▤","folders"),("Toplu Mesajlaşma","➤","bulk"),("Gönderim Geçmişi","◷","history"),("Filtreler","▽","filters"),("Ayarlar","⚙","settings")]:
-            b=QPushButton(f"{icon}   {text}");b.setMinimumHeight(39);b.setStyleSheet("text-align:left;padding:8px 7px");b.clicked.connect(lambda _,k=key:self.navigate(k));self.nav[key]=b;v.addWidget(b)
+        for text,key in [("Sohbetler","chats"),("Klasörler","folders"),("Toplu Mesajlaşma","bulk"),("Gönderim Geçmişi","history"),("Filtreler","filters"),("Ayarlar","settings")]:
+            b=_icon_button(key,text);b.setMinimumHeight(39);b.setStyleSheet("text-align:left;padding:8px 7px");b.clicked.connect(lambda _,k=key:self.navigate(k));self.nav[key]=b;v.addWidget(b)
         v.addStretch();self.credit=QLabel("Arş. Gör. Muhammed Yusuf Batur tarafından geliştirilmiştir.");self.credit.setWordWrap(True);self.credit.setStyleSheet("color:#9298a7;padding:5px 4px");v.addWidget(self.credit);self._mark_nav("chats");return f
     def _center_panel(self):
         f=QFrame(objectName="panel");f.setMinimumWidth(300);v=QVBoxLayout(f);v.setContentsMargins(10,9,10,9);self.center_stack=QStackedWidget(objectName="centerStack");v.addWidget(self.center_stack)
@@ -388,34 +444,35 @@ class MainWindow(QMainWindow):
         chips=QHBoxLayout();self.filters={}
         for label in ["Tümü","Gruplar","Kişiler","Kanallar","Botlar"]:
             b=QPushButton(label);b.setCheckable(True);b.setChecked(label=="Tümü");b.clicked.connect(lambda _,x=label:self.set_filter(x));chips.addWidget(b);self.filters[label]=b
-        cv.addLayout(chips);self.chat_list=DraggableChatList();self.chat_list.setIconSize(QSize(40,40));self.chat_list.setWordWrap(True);self.chat_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff);self.chat_list.setSelectionBehavior(QAbstractItemView.SelectRows);self.chat_list.itemSelectionChanged.connect(self._chat_selected);self.chat_list.setContextMenuPolicy(Qt.CustomContextMenu);self.chat_list.customContextMenuRequested.connect(self._chat_menu);cv.addWidget(self.chat_list,1);self.tabs.addTab(cp,"◉  Sohbetler")
-        fp=QWidget();fv=QVBoxLayout(fp);fv.setContentsMargins(3,8,3,2);fh=QHBoxLayout();fh.addWidget(QLabel("Klasörler",objectName="sectionTitle"));fh.addStretch();self.add_collection_btn=QPushButton("＋ Yeni klasör");self.add_collection_btn.clicked.connect(self.create_collection);fh.addWidget(self.add_collection_btn);fv.addLayout(fh);self.collection_search=QLineEdit();self.collection_search.setPlaceholderText("Klasörlerde ara…");self.collection_search.textChanged.connect(lambda _:self.refresh_tree());fv.addWidget(self.collection_search);self.tree=CollectionTree();self.tree.itemClicked.connect(self._collection_selected);self.tree.itemDoubleClicked.connect(self._collection_selected);self.tree.setContextMenuPolicy(Qt.CustomContextMenu);self.tree.customContextMenuRequested.connect(self._collection_menu);self.tree.chatsDropped.connect(self._dropped_chats);fv.addWidget(self.tree,1);self.tabs.addTab(fp,"▤  Klasörler");self.tabs.currentChanged.connect(lambda i:self.navigate("chats" if i==0 else "folders"));self.center_stack.addWidget(p)
+        cv.addLayout(chips);self.chat_list=DraggableChatList();self.chat_list.setIconSize(QSize(40,40));self.chat_list.setWordWrap(True);self.chat_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff);self.chat_list.setSelectionBehavior(QAbstractItemView.SelectRows);self.chat_list.itemSelectionChanged.connect(self._chat_selected);self.chat_list.setContextMenuPolicy(Qt.CustomContextMenu);self.chat_list.customContextMenuRequested.connect(self._chat_menu);cv.addWidget(self.chat_list,1);self.tabs.addTab(cp,"Sohbetler")
+        fp=QWidget();fv=QVBoxLayout(fp);fv.setContentsMargins(3,8,3,2);fh=QHBoxLayout();fh.addWidget(QLabel("Klasörler",objectName="sectionTitle"));fh.addStretch();self.add_collection_btn=_icon_button("plus","Yeni klasör");self.add_collection_btn.clicked.connect(self.create_collection);fh.addWidget(self.add_collection_btn);fv.addLayout(fh);self.collection_search=QLineEdit();self.collection_search.setPlaceholderText("Klasörlerde ara…");self.collection_search.textChanged.connect(lambda _:self.refresh_tree());fv.addWidget(self.collection_search);self.tree=CollectionTree();self.tree.itemClicked.connect(self._collection_selected);self.tree.itemDoubleClicked.connect(self._collection_selected);self.tree.setContextMenuPolicy(Qt.CustomContextMenu);self.tree.customContextMenuRequested.connect(self._collection_menu);self.tree.chatsDropped.connect(self._dropped_chats);fv.addWidget(self.tree,1);self.tabs.addTab(fp,"Klasörler");self.tabs.currentChanged.connect(lambda i:self.navigate("chats" if i==0 else "folders"));self.center_stack.addWidget(p)
         self.settings_page=self._settings_page();self.history_page=self._history_page();self.filters_page=self._filters_page();self.bulk_page=self._bulk_page()
         for page in [self.settings_page,self.history_page,self.filters_page,self.bulk_page]:self.center_stack.addWidget(page)
         return f
     def _conversation_panel(self):
         self.conversation=QFrame(objectName="conversation");self.conversation.setMinimumWidth(360);v=QVBoxLayout(self.conversation);v.setContentsMargins(0,0,0,0);v.setSpacing(0);head=QFrame(objectName="chatHeader");h=QHBoxLayout(head);h.setContentsMargins(15,10,15,10);hv=QVBoxLayout();self.chat_title=QLabel("Sohbet seçin",objectName="sectionTitle");self.chat_meta=QLabel("Telegram mesajları burada yüklenecek",objectName="muted");hv.addWidget(self.chat_title);hv.addWidget(self.chat_meta);h.addLayout(hv);h.addStretch();self.message_search=QLineEdit();self.message_search.setPlaceholderText("Bu sohbette ara");self.message_search.setMaximumWidth(250);self.message_search.returnPressed.connect(self.search_messages);h.addWidget(self.message_search);v.addWidget(head)
-        self.older_messages_btn=QPushButton("↑  Önceki mesajları yükle");self.older_messages_btn.setObjectName("olderMessages");self.older_messages_btn.clicked.connect(self.load_older_messages);v.addWidget(self.older_messages_btn,0,Qt.AlignHCenter);self.messages=MessageListWidget();self.messages.setContextMenuPolicy(Qt.CustomContextMenu);self.messages.customContextMenuRequested.connect(self._message_menu);v.addWidget(self.messages,1)
+        self.older_messages_btn=_icon_button("up","Önceki mesajları yükle");self.older_messages_btn.setObjectName("olderMessages");self.older_messages_btn.clicked.connect(self.load_older_messages);v.addWidget(self.older_messages_btn,0,Qt.AlignHCenter);self.messages=MessageListWidget();self.messages.setContextMenuPolicy(Qt.CustomContextMenu);self.messages.customContextMenuRequested.connect(self._message_menu);v.addWidget(self.messages,1)
         compose=QFrame(objectName="compose");compose_v=QVBoxLayout(compose);compose_v.setContentsMargins(12,8,12,8)
-        self.reply_preview_frame=QFrame(objectName="replyPreviewFrame");reply_row=QHBoxLayout(self.reply_preview_frame);reply_row.setContentsMargins(10,5,6,5);self.reply_preview=QLabel("");self.reply_preview.setWordWrap(True);reply_row.addWidget(self.reply_preview,1);self.clear_reply_btn=QPushButton("×");self.clear_reply_btn.setFixedWidth(32);self.clear_reply_btn.setToolTip("Yanıtı iptal et");self.clear_reply_btn.clicked.connect(self._clear_reply);reply_row.addWidget(self.clear_reply_btn);self.reply_preview_frame.hide();compose_v.addWidget(self.reply_preview_frame)
-        self.pending_files_label=QLabel("");self.pending_files_label.setObjectName("muted");compose_v.addWidget(self.pending_files_label);ch=QHBoxLayout();ch.setSpacing(8);attach=QPushButton("📎");attach.setToolTip("Dosya ekle");attach.clicked.connect(self.attach_to_chat);ch.addWidget(attach);self.emoji_button=QPushButton("☺");self.emoji_button.setToolTip("Emoji ekle");self.emoji_button.clicked.connect(self._show_emoji_picker);ch.addWidget(self.emoji_button);self.message_input=FileDropTextEdit();self.message_input.send_on_enter=False;self.message_input.setMaximumHeight(90);self.message_input.setPlaceholderText("Mesaj yazın veya dosyaları buraya sürükleyin…");self.message_input.filesDropped.connect(self._add_chat_files);self.message_input.sendRequested.connect(lambda:asyncio.create_task(self.send_message()));ch.addWidget(self.message_input,1);self.clear_attachments=QPushButton("×  Ekleri kaldır");self.clear_attachments.setObjectName("clearAttachments");self.clear_attachments.setToolTip("Gönderilecek tüm ekleri kaldır");self.clear_attachments.setAccessibleName("Tüm ekleri kaldır");self.clear_attachments.setAccessibleDescription("Mesaj metnini değiştirmeden bekleyen ekleri kaldırır.");self.clear_attachments.setEnabled(False);self.clear_attachments.clicked.connect(self._clear_chat_files);ch.addWidget(self.clear_attachments);send=QPushButton("Gönder");send.setObjectName("primary");send.clicked.connect(self.send_message);ch.addWidget(send);compose_v.addLayout(ch);v.addWidget(compose);return self.conversation
+        self.reply_preview_frame=QFrame(objectName="replyPreviewFrame");reply_row=QHBoxLayout(self.reply_preview_frame);reply_row.setContentsMargins(10,5,6,5);self.reply_preview=QLabel("");self.reply_preview.setWordWrap(True);reply_row.addWidget(self.reply_preview,1);self.clear_reply_btn=_icon_button("close",tooltip="Yanıtı iptal et");self.clear_reply_btn.clicked.connect(self._clear_reply);reply_row.addWidget(self.clear_reply_btn);self.reply_preview_frame.hide();compose_v.addWidget(self.reply_preview_frame)
+        self.pending_files_label=QLabel("");self.pending_files_label.setObjectName("muted");compose_v.addWidget(self.pending_files_label);ch=QHBoxLayout();ch.setSpacing(8);attach=_icon_button("attach",tooltip="Dosya ekle");attach.clicked.connect(self.attach_to_chat);ch.addWidget(attach);self.emoji_button=_icon_button("emoji",tooltip="Emoji ekle");self.emoji_button.clicked.connect(self._show_emoji_picker);ch.addWidget(self.emoji_button);self.message_input=FileDropTextEdit();self.message_input.send_on_enter=False;self.message_input.setMaximumHeight(90);self.message_input.setPlaceholderText("Mesaj yazın veya dosyaları buraya sürükleyin…");self.message_input.filesDropped.connect(self._add_chat_files);self.message_input.sendRequested.connect(lambda:asyncio.create_task(self.send_message()));ch.addWidget(self.message_input,1);self.clear_attachments=_icon_button("close","Ekleri kaldır");self.clear_attachments.setObjectName("clearAttachments");self.clear_attachments.setToolTip("Gönderilecek tüm ekleri kaldır");self.clear_attachments.setAccessibleName("Tüm ekleri kaldır");self.clear_attachments.setAccessibleDescription("Mesaj metnini değiştirmeden bekleyen ekleri kaldırır.");self.clear_attachments.setEnabled(False);self.clear_attachments.clicked.connect(self._clear_chat_files);ch.addWidget(self.clear_attachments);send=_icon_button("bulk","Gönder");send.setObjectName("primary");send.clicked.connect(self.send_message);ch.addWidget(send);compose_v.addLayout(ch);v.addWidget(compose);return self.conversation
     def _history_page(self):
-        p=QWidget();v=QVBoxLayout(p);h=QHBoxLayout();h.addWidget(QLabel("Gönderim geçmişi",objectName="sectionTitle"));h.addStretch();self.retry_btn=QPushButton("Başarısızları yeniden dene");self.retry_btn.clicked.connect(self.retry_failed);h.addWidget(self.retry_btn);self.cancel_history_job_btn=QPushButton("Seçili işi iptal et");self.cancel_history_job_btn.clicked.connect(self.cancel_selected_history_job);h.addWidget(self.cancel_history_job_btn);b=QPushButton("Yenile");b.clicked.connect(self.refresh_history);h.addWidget(b);v.addLayout(h)
+        p=QWidget();v=QVBoxLayout(p);h=QHBoxLayout();h.addWidget(QLabel("Gönderim geçmişi",objectName="sectionTitle"));h.addStretch();self.retry_btn=QPushButton("Başarısızları yeniden dene");self.retry_btn.clicked.connect(self.retry_failed);h.addWidget(self.retry_btn);self.cancel_history_job_btn=QPushButton("Seçili işi iptal et");self.cancel_history_job_btn.clicked.connect(self.cancel_selected_history_job);h.addWidget(self.cancel_history_job_btn);b=_icon_button("refresh","Yenile");b.clicked.connect(self.refresh_history);h.addWidget(b);v.addLayout(h)
         self.history=QTableWidget(0,7);self.history.setHorizontalHeaderLabels(["Tarih","Koleksiyon","Durum","Başarılı","Toplam","Mesaj","Ekler"]);header=self.history.horizontalHeader();header.setSectionResizeMode(QHeaderView.Interactive);header.setStretchLastSection(False);header.setMinimumSectionSize(90);self.history.setColumnWidth(0,170);self.history.setColumnWidth(1,260);self.history.setColumnWidth(2,110);self.history.setColumnWidth(3,90);self.history.setColumnWidth(4,90);self.history.setColumnWidth(5,320);self.history.setColumnWidth(6,200);self.history.setSortingEnabled(True);self.history.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded);self.history.setSelectionBehavior(QAbstractItemView.SelectRows);v.addWidget(self.history,1)
         self.target_detail=QListWidget();self.target_detail.setMaximumHeight(200);self.target_detail.setSelectionMode(QAbstractItemView.SingleSelection);v.addWidget(QLabel("Alıcı sonuçları"));v.addWidget(self.target_detail);self.cancel_history_target_btn=QPushButton("Seçili bekleyen alıcıyı iptal et");self.cancel_history_target_btn.clicked.connect(self.cancel_selected_history_target);v.addWidget(self.cancel_history_target_btn);self.history.itemSelectionChanged.connect(self._history_selected);return p
     def _filters_page(self):
-        p=QWidget();v=QVBoxLayout(p);v.addWidget(QLabel("Filtreler ve görünürlük",objectName="sectionTitle"));self.visible_mode=QComboBox();self.visible_mode.addItems(["Tüm sohbetler","Yalnızca gruplar","Yalnızca kişiler","Yalnızca koleksiyonlardakiler","Gizlenen sohbetleri yönet"]);self.visible_mode.currentTextChanged.connect(self.refresh_chats);v.addWidget(QLabel("Sohbet görünümü"));v.addWidget(self.visible_mode);self.notification_mode=QComboBox();self.notification_mode.addItems(["Tüm bildirimler","Yalnızca koleksiyonlar","Sessiz mod"]);self.notification_mode.currentTextChanged.connect(lambda x:self.store.set_preference("notifications/mode",x));v.addWidget(QLabel("Uygulama bildirim modu"));v.addWidget(self.notification_mode);self.notification_preview=QCheckBox("Bildirimlerde ileti metnini göster");self.notification_preview.setChecked(True);self.notification_preview.toggled.connect(lambda x:self.store.set_preference("notifications/preview",x));v.addWidget(self.notification_preview);self.visibility_list=QListWidget();self.visibility_list.setSelectionMode(QAbstractItemView.ExtendedSelection);v.addWidget(QLabel("Sohbetler · çoklu seçim yapabilirsiniz"));v.addWidget(self.visibility_list,1);row=QHBoxLayout();hide=QPushButton("Seçilileri gizle");unhide=QPushButton("Gizlemeyi kaldır");hide.clicked.connect(lambda:self._set_hidden_ids([i.data(Qt.UserRole) for i in self.visibility_list.selectedItems()],True));unhide.clicked.connect(lambda:self._unhide_selected());row.addWidget(hide);row.addWidget(unhide);v.addLayout(row);return p
+        p=QWidget();v=QVBoxLayout(p);v.addWidget(QLabel("Filtreler ve görünürlük",objectName="sectionTitle"));self.visible_mode=QComboBox();self.visible_mode.addItems(["Tüm sohbetler","Yalnızca gruplar","Yalnızca kişiler","Yalnızca koleksiyonlardakiler","Gizlenen sohbetleri yönet"]);self.visible_mode.currentTextChanged.connect(self.refresh_chats);v.addWidget(QLabel("Sohbet görünümü"));v.addWidget(self.visible_mode);self.notification_mode=QComboBox();self.notification_mode.addItems(["Tüm bildirimler","Yalnızca koleksiyonlar","Sessiz mod"]);self.notification_mode.currentTextChanged.connect(lambda x:self.store.set_preference("notifications/mode",x));v.addWidget(QLabel("Uygulama bildirim modu"));v.addWidget(self.notification_mode);self.notification_preview=QCheckBox("Bildirimlerde ileti metnini göster");self.notification_preview.setChecked(True);self.notification_preview.toggled.connect(lambda x:self.store.set_preference("notifications/preview",x));v.addWidget(self.notification_preview);self.visibility_list=QListWidget();self.visibility_list.setSelectionMode(QAbstractItemView.ExtendedSelection);v.addWidget(QLabel("Sohbetler · çoklu seçim yapabilirsiniz"));v.addWidget(self.visibility_list,1);row=QHBoxLayout();hide=_icon_button("eye-off","Seçilileri gizle");unhide=_icon_button("eye","Gizlemeyi kaldır");hide.clicked.connect(lambda:self._set_hidden_ids([i.data(Qt.UserRole) for i in self.visibility_list.selectedItems()],True));unhide.clicked.connect(lambda:self._unhide_selected());row.addWidget(hide);row.addWidget(unhide);v.addLayout(row);return p
     def _bulk_page(self):
         p=QWidget();v=QVBoxLayout(p);v.addWidget(QLabel("Toplu mesajlaşma",objectName="sectionTitle"));v.addWidget(QLabel("Bir koleksiyon seçip alıcıları inceleyin. Mesajlar yalnızca her bir sohbet için gönderim onayından sonra gönderilir."));self.bulk_collection_combo=QComboBox();self.bulk_collection_combo.currentIndexChanged.connect(self._bulk_collection_changed);v.addWidget(self.bulk_collection_combo);self.bulk_recipients=QListWidget();v.addWidget(self.bulk_recipients,1);b=QPushButton("Mesaj ve dosya gönder…");b.setObjectName("primary");b.clicked.connect(self.start_bulk);v.addWidget(b);self.cancel_job_btn=QPushButton("Bekleyen işleri iptal et");self.cancel_job_btn.clicked.connect(self.cancel_bulk);v.addWidget(self.cancel_job_btn);return p
     def _settings_page(self):
         p=QScrollArea(objectName="settingsPage");p.setWidgetResizable(True);p.setFrameShape(QFrame.NoFrame);inner=QWidget(objectName="settingsInner");v=QVBoxLayout(inner);v.addWidget(QLabel("Ayarlar",objectName="sectionTitle"))
         appearance=QGroupBox("Görünüm");form=QFormLayout(appearance);self.theme=QComboBox();self.theme.addItems(["Açık","Koyu","Sistem ayarı"]);self.theme.currentTextChanged.connect(self.apply_theme);form.addRow("Tema",self.theme);self.font=QComboBox();self.font.addItems(["Segoe UI","Arial","Calibri","Tahoma","Verdana"]);self.font.currentTextChanged.connect(self.apply_font);form.addRow("Yazı tipi",self.font);row=QHBoxLayout();self.font_size=QSlider(Qt.Horizontal);self.font_size.setRange(10,20);self.font_size.valueChanged.connect(self.apply_font);self.font_px=QLabel("13 px");row.addWidget(self.font_size);row.addWidget(self.font_px);form.addRow("Yazı boyutu",row);self.accent_btn=QPushButton("Vurgu rengini seç");self.accent_btn.clicked.connect(self.choose_accent);form.addRow("Vurgu rengi",self.accent_btn);self.density=QComboBox();self.density.addItems(["Rahat","Standart","Yoğun"]);self.density.currentTextChanged.connect(self.apply_density);form.addRow("Liste yoğunluğu",self.density);v.addWidget(appearance)
-        background=QGroupBox("Sohbet arka planı");bl=QHBoxLayout(background);self.bg_path=QLineEdit();self.bg_path.setReadOnly(True);self.bg_path.setPlaceholderText("Görsel seçilmedi");pick=QPushButton("Görsel seç…");pick.clicked.connect(self.choose_background);self.bg_color_btn=QPushButton("Düz renk seç…");self.bg_color_btn.clicked.connect(self.choose_background_color);clear=QPushButton("Varsayılana dön");clear.clicked.connect(self.clear_background);bl.addWidget(self.bg_path,1);bl.addWidget(pick);bl.addWidget(self.bg_color_btn);bl.addWidget(clear);v.addWidget(background)
-        account=QGroupBox("Telegram hesabı");al=QVBoxLayout(account);self.account_status=QLabel("Bağlı değil");al.addWidget(self.account_status);ar=QHBoxLayout();connect=QPushButton("Hesabı bağla / değiştir");connect.setObjectName("primary");connect.clicked.connect(self.connect_telegram);disconnect=QPushButton("Bağlantıyı kes");disconnect.clicked.connect(lambda:asyncio.create_task(self.disconnect_telegram()));sync=QPushButton("Sohbetleri eşitle");sync.clicked.connect(lambda:asyncio.create_task(self.sync_chats()));logout=QPushButton("Telegram oturumundan çıkış yap");logout.clicked.connect(self.logout_telegram);ar.addWidget(connect);ar.addWidget(disconnect);ar.addWidget(sync);al.addLayout(ar);al.addWidget(logout);secure=QLabel("API Hash, işletim sisteminin kimlik bilgisi kasasında saklanır. Telegram oturumu kullanıcı uygulama verileri klasöründedir.");secure.setWordWrap(True);secure.setObjectName("muted");al.addWidget(secure);v.addWidget(account)
+        background=QGroupBox("Sohbet arka planı");bl=QHBoxLayout(background);self.bg_path=QLineEdit();self.bg_path.setReadOnly(True);self.bg_path.setPlaceholderText("Görsel seçilmedi");pick=_icon_button("image","Görsel seç…");pick.clicked.connect(self.choose_background);self.bg_color_btn=QPushButton("Düz renk seç…");self.bg_color_btn.clicked.connect(self.choose_background_color);clear=QPushButton("Varsayılana dön");clear.clicked.connect(self.clear_background);bl.addWidget(self.bg_path,1);bl.addWidget(pick);bl.addWidget(self.bg_color_btn);bl.addWidget(clear);v.addWidget(background)
+        account=QGroupBox("Telegram hesabı");al=QVBoxLayout(account);self.account_status=QLabel("Bağlı değil");al.addWidget(self.account_status);ar=QHBoxLayout();connect=QPushButton("Hesabı bağla / değiştir");connect.setObjectName("primary");connect.clicked.connect(self.connect_telegram);disconnect=QPushButton("Bağlantıyı kes");disconnect.clicked.connect(lambda:asyncio.create_task(self.disconnect_telegram()));sync=_icon_button("refresh","Sohbetleri eşitle");sync.clicked.connect(lambda:asyncio.create_task(self.sync_chats()));logout=QPushButton("Telegram oturumundan çıkış yap");logout.clicked.connect(self.logout_telegram);ar.addWidget(connect);ar.addWidget(disconnect);ar.addWidget(sync);al.addLayout(ar);al.addWidget(logout);secure=QLabel("API Hash, işletim sisteminin kimlik bilgisi kasasında saklanır. Telegram oturumu kullanıcı uygulama verileri klasöründedir.");secure.setWordWrap(True);secure.setObjectName("muted");al.addWidget(secure);v.addWidget(account)
         options=QGroupBox("Görünürlük");ol=QVBoxLayout(options);self.credit_check=QCheckBox("Küçük geliştirici bilgisini göster");self.credit_check.setChecked(True);self.credit_check.toggled.connect(self.credit.setVisible);ol.addWidget(self.credit_check);self.confirm_send=QCheckBox("Toplu gönderim öncesi alıcı onayını zorunlu tut");self.confirm_send.setChecked(True);ol.addWidget(self.confirm_send);v.addWidget(options);v.addStretch();p.setWidget(inner);return p
     def _header_dummy(self):pass
     def _mark_nav(self,key):
         for k,b in self.nav.items():b.setProperty("active",k==key);b.style().unpolish(b);b.style().polish(b)
+        self._refresh_ui_icons()
     def navigate(self,key):
         self.active_nav=key;self._mark_nav(key);self.conversation.show()
         if key in ("chats","folders"):self.center_stack.setCurrentIndex(0);self.tabs.setCurrentIndex(0 if key=="chats" else 1);return
@@ -482,7 +539,9 @@ class MainWindow(QMainWindow):
         def append_children(parent_id,parent_item=None):
             for c in by_parent.get(parent_id,[]):
                 if query and not subtree_matches(c['id']):continue
-                item=QTreeWidgetItem([f"{c['icon']}  {c['name']}  ({c['chat_count']})"]);item.setData(0,Qt.UserRole,c['id']);item.setData(0,TREE_NODE_KIND_ROLE,"collection");item.setForeground(0,QColor(c['color']));self._tree_items[c['id']]=item
+                custom_icon=c["icon"] if c["icon"]!="📁" else ""
+                label=f"{c['name']}  ({c['chat_count']})"
+                item=QTreeWidgetItem([f"{custom_icon}  {label}" if custom_icon else label]);item.setData(0,TREE_ICON_ROLE,None if custom_icon else "folders");item.setData(0,Qt.UserRole,c['id']);item.setData(0,TREE_NODE_KIND_ROLE,"collection");item.setForeground(0,QColor(c['color']));self._tree_items[c['id']]=item
                 if parent_item is None:self.tree.addTopLevelItem(item)
                 else:parent_item.addChild(item)
                 if ("collection",c['id'],None) in selected:
@@ -490,13 +549,14 @@ class MainWindow(QMainWindow):
                     self.tree.setCurrentItem(item,0,QItemSelectionModel.NoUpdate)
                 for chat in self.store.collection_chats(c['id'],False):
                     if query and query not in chat['title'].casefold():continue
-                    chat_item=QTreeWidgetItem([f"◉  {chat['title']}  ·  {chat['kind']}"]);chat_item.setData(0,Qt.UserRole,chat['peer_id']);chat_item.setData(0,TREE_NODE_KIND_ROLE,"chat");chat_item.setData(0,TREE_OWNER_COLLECTION_ROLE,c['id']);chat_item.setToolTip(0,chat['title']);item.addChild(chat_item)
+                    chat_item=QTreeWidgetItem([f"{chat['title']}  ·  {chat['kind']}"]);chat_item.setData(0,TREE_ICON_ROLE,"chats");chat_item.setData(0,Qt.UserRole,chat['peer_id']);chat_item.setData(0,TREE_NODE_KIND_ROLE,"chat");chat_item.setData(0,TREE_OWNER_COLLECTION_ROLE,c['id']);chat_item.setToolTip(0,chat['title']);item.addChild(chat_item)
                     if ("chat",chat['peer_id'],c['id']) in selected:
                         chat_item.setSelected(True)
                         self.tree.setCurrentItem(chat_item,0,QItemSelectionModel.NoUpdate)
                 append_children(c['id'],item)
                 if query:item.setExpanded(True)
         append_children(None)
+        self._refresh_ui_icons()
         self.refresh_bulk_collections()
     def refresh_bulk_collections(self):
         if not hasattr(self,"bulk_collection_combo"):return
@@ -1043,11 +1103,46 @@ class MainWindow(QMainWindow):
         if QMessageBox.question(self,"Telegram oturumundan çıkış yap","Bu bilgisayardaki Telegram kullanıcı oturumu kapatılacak. Yerel klasörler ve gönderim kayıtları korunur. Devam edilsin mi?",QMessageBox.Yes|QMessageBox.No)==QMessageBox.Yes:asyncio.create_task(self._discard_new_account_session())
     def _load_settings(self):
         self.theme.setCurrentText(self.store.preference('appearance/theme','Açık'));self.font.setCurrentText(self.store.preference('appearance/font','Segoe UI'));self.font_size.setValue(self.store.preference('appearance/font_size',13));self.density.setCurrentText(self.store.preference('appearance/density','Rahat'));self.notification_mode.setCurrentText(self.store.preference('notifications/mode','Tüm bildirimler'));self.notification_preview.setChecked(self.store.preference('notifications/preview',True));self.credit_check.setChecked(self.store.preference('appearance/credit',True));self.credit.setVisible(self.credit_check.isChecked());self.bg_path.setText(self.store.preference('appearance/background',''));self.accent_btn.setText(self.store.preference('appearance/accent','#a90025'));self.apply_theme();self.apply_font();self.apply_density();self._set_message_background(self.bg_path.text())
+    def _refresh_ui_icons(self):
+        theme = self.theme.currentText() if hasattr(self, "theme") else "Açık"
+        dark = theme == "Koyu" or (theme == "Sistem ayarı" and QApplication.palette().color(QPalette.Window).lightness() < 128)
+        accent = self.store.preference("appearance/accent", "#a90025")
+        text = "#e8edf5" if dark else "#202938"
+        muted = "#a1adbd" if dark else "#687589"
+        accent_text = "#202938" if QColor(accent).lightness() > 155 else "#ffffff"
+        selected = "#ffffff" if dark else "#202938"
+        size = _icon_size(self.font_size.value() if hasattr(self, "font_size") else 13)
+        for button in self.findChildren(QPushButton):
+            name = button.property("uiIcon")
+            if not name:
+                continue
+            color = ("#ff9aa5" if dark else "#a61d35") if button.objectName() == "clearAttachments" else accent_text if button.property("active") or button.objectName() == "primary" else text
+            button.setIcon(_line_icon(name, color, size, muted, color))
+            button.setIconSize(QSize(size, size))
+        if hasattr(self, "tabs"):
+            self.tabs.setIconSize(QSize(size, size))
+            for index, name in enumerate(("chats", "folders")):
+                color = accent_text if self.active_nav == name else muted
+                self.tabs.setTabIcon(index, _line_icon(name, color, size, muted, accent_text))
+        if hasattr(self, "tree"):
+            self.tree.setIconSize(QSize(size, size))
+            iterator = QTreeWidgetItemIterator(self.tree)
+            while iterator.value():
+                item = iterator.value()
+                name = item.data(0, TREE_ICON_ROLE)
+                if name:
+                    item.setIcon(0, _line_icon(name, text, size, muted, selected))
+                iterator += 1
+        if hasattr(self, "chat_list"):
+            avatar_size = round(40 * size / 18)
+            self.chat_list.setIconSize(QSize(avatar_size, avatar_size))
+
     def apply_theme(self,*args):
         if not hasattr(self,'theme'):return
         theme=self.theme.currentText();accent=self.store.preference('appearance/accent','#a90025')
         is_dark=theme=='Koyu' or (theme=='Sistem ayarı' and QApplication.palette().color(QPalette.Window).lightness()<128)
         self.setStyleSheet(_theme_stylesheet(is_dark,accent));self.store.set_preference('appearance/theme',theme)
+        self._refresh_ui_icons()
         if hasattr(self,'messages'):self._set_message_background(self.bg_path.text() if hasattr(self,'bg_path') else '')
     def apply_font(self,*args):
         if not hasattr(self,'font_size'):return
@@ -1058,6 +1153,7 @@ class MainWindow(QMainWindow):
             small=QFont(f);small.setPointSize(max(7,size-4));self.credit.setFont(small)
         if hasattr(self,'chat_list'):
             for i in range(self.chat_list.count()):self.chat_list.item(i).setSizeHint(QSize(0,self._chat_row_height()))
+        self._refresh_ui_icons()
         if hasattr(self,'tree'):self.tree.doItemsLayout()
         self.store.set_preference('appearance/font',family);self.store.set_preference('appearance/font_size',size)
         if self.selected_peer is not None:self._render_messages(self.selected_peer)
