@@ -35,7 +35,7 @@ class Store:
             CREATE TABLE IF NOT EXISTS send_jobs(id TEXT PRIMARY KEY, collection_id INTEGER, message TEXT NOT NULL, files_json TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, finished_at TEXT);
             CREATE TABLE IF NOT EXISTS send_job_collections(job_id TEXT NOT NULL REFERENCES send_jobs(id) ON DELETE CASCADE, collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE, PRIMARY KEY(job_id,collection_id));
             CREATE TABLE IF NOT EXISTS send_targets(id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL REFERENCES send_jobs(id) ON DELETE CASCADE, peer_id INTEGER NOT NULL, peer_title TEXT NOT NULL, status TEXT NOT NULL, error TEXT, telegram_message_id INTEGER, attachments_json TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(job_id,peer_id));
-            CREATE TABLE IF NOT EXISTS cached_messages(peer_id INTEGER NOT NULL, message_id INTEGER NOT NULL, sender_id INTEGER, sender_name TEXT, text TEXT NOT NULL DEFAULT '', date TEXT, outgoing INTEGER NOT NULL DEFAULT 0, media_json TEXT, reactions_json TEXT, reply_json TEXT, PRIMARY KEY(peer_id,message_id));
+            CREATE TABLE IF NOT EXISTS cached_messages(peer_id INTEGER NOT NULL, message_id INTEGER NOT NULL, sender_id INTEGER, sender_name TEXT, text TEXT NOT NULL DEFAULT '', date TEXT, outgoing INTEGER NOT NULL DEFAULT 0, media_json TEXT, reactions_json TEXT, reply_json TEXT, edit_date TEXT, edit_hidden INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(peer_id,message_id));
             CREATE INDEX IF NOT EXISTS idx_messages_peer_date ON cached_messages(peer_id,date DESC);
             ''')
             columns={r[1] for r in c.execute("PRAGMA table_info(chats)")}
@@ -45,6 +45,8 @@ class Store:
             message_columns={r[1] for r in c.execute("PRAGMA table_info(cached_messages)")}
             if "reactions_json" not in message_columns:c.execute("ALTER TABLE cached_messages ADD COLUMN reactions_json TEXT")
             if "reply_json" not in message_columns:c.execute("ALTER TABLE cached_messages ADD COLUMN reply_json TEXT")
+            if "edit_date" not in message_columns:c.execute("ALTER TABLE cached_messages ADD COLUMN edit_date TEXT")
+            if "edit_hidden" not in message_columns:c.execute("ALTER TABLE cached_messages ADD COLUMN edit_hidden INTEGER NOT NULL DEFAULT 0")
             # Older databases may retain send jobs after their collection was deleted.
             # Only backfill memberships whose collection still exists, otherwise the
             # foreign key on send_job_collections prevents the app from starting.
@@ -137,8 +139,28 @@ class Store:
     def set_preference(self,key,value):
         with self.db() as c:c.execute("INSERT INTO preferences(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(key,json.dumps(value,ensure_ascii=False)))
     def cache_messages(self,rows):
-        normalized=[{**row,"reactions_json":row.get("reactions_json"),"reply_json":row.get("reply_json")} for row in rows]
-        with self.db() as c:c.executemany("INSERT OR REPLACE INTO cached_messages(peer_id,message_id,sender_id,sender_name,text,date,outgoing,media_json,reactions_json,reply_json) VALUES(:peer_id,:message_id,:sender_id,:sender_name,:text,:date,:outgoing,:media_json,:reactions_json,:reply_json)",normalized)
+        normalized=[{**row,"reactions_json":row.get("reactions_json"),"reply_json":row.get("reply_json"),"edit_date":row.get("edit_date"),"edit_hidden":int(bool(row.get("edit_hidden")))} for row in rows]
+        with self.db() as c:c.executemany("""
+            INSERT INTO cached_messages(peer_id,message_id,sender_id,sender_name,text,date,outgoing,media_json,reactions_json,reply_json,edit_date,edit_hidden)
+            VALUES(:peer_id,:message_id,:sender_id,:sender_name,:text,:date,:outgoing,:media_json,:reactions_json,:reply_json,:edit_date,:edit_hidden)
+            ON CONFLICT(peer_id,message_id) DO UPDATE SET
+                sender_id=excluded.sender_id,sender_name=excluded.sender_name,text=excluded.text,date=excluded.date,
+                outgoing=excluded.outgoing,media_json=excluded.media_json,reactions_json=excluded.reactions_json,
+                reply_json=excluded.reply_json,edit_date=excluded.edit_date,edit_hidden=excluded.edit_hidden
+            WHERE cached_messages.edit_date IS NULL
+                OR (excluded.edit_date IS NOT NULL AND julianday(excluded.edit_date)>=julianday(cached_messages.edit_date))
+            """,normalized)
+
+    def update_message_edit(self,row):
+        """Apply only edit-related fields; preserve reply and reaction metadata."""
+        if not row.get("edit_date"):return False
+        with self.db() as c:
+            result=c.execute("""
+                UPDATE cached_messages SET text=:text,media_json=:media_json,edit_date=:edit_date,edit_hidden=:edit_hidden
+                WHERE peer_id=:peer_id AND message_id=:message_id
+                    AND (edit_date IS NULL OR julianday(:edit_date)>=julianday(edit_date))
+                """,{**row,"edit_hidden":int(bool(row.get("edit_hidden")))})
+            return bool(result.rowcount)
     def update_message_reactions(self,peer_id,message_id,reactions):
         with self.db() as c:
             c.execute("UPDATE cached_messages SET reactions_json=? WHERE peer_id=? AND message_id=?",(json.dumps(reactions,ensure_ascii=False),int(peer_id),int(message_id)))
