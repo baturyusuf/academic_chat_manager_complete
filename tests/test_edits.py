@@ -31,3 +31,18 @@ async def test_history_and_live_edits_receive_server_metadata(tmp_path):
     await handler(SimpleNamespace(message=message))
     assert not arrivals
     assert edits==[{"peer_id":7,"message_id":42,"text":"Yeni metin","media_json":None,"edit_date":stamp.isoformat(),"edit_hidden":0}]
+
+@pytest.mark.asyncio
+async def test_outgoing_read_updates_are_exposed_as_per_message_receipts(tmp_path):
+    class Client:
+        def __init__(self):self.handlers=[]
+        def add_event_handler(self,handler,event):self.handlers.append((handler,event))
+    service=TelegramService(tmp_path/"session-read")
+    service.client=Client();read_updates=[]
+    service.start_updates(lambda row:None,read_handler=lambda peer_id,max_id:read_updates.append((peer_id,max_id)))
+    handler=next(handler for handler,event in service.client.handlers if isinstance(event,events.MessageRead))
+    peer=types.PeerUser(7)
+    await handler(SimpleNamespace(outbox=False,peer=peer,max_id=49))
+    assert read_updates==[] and not service.is_message_read(7,49)
+    await handler(SimpleNamespace(outbox=True,peer=peer,max_id=49))
+    assert read_updates==[(7,49)] and service.is_message_read(7,49) and not service.is_message_read(7,50)

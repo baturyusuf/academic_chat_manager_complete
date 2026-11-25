@@ -245,6 +245,67 @@ def test_chat_message_time_uses_local_timezone_and_displays_reactions():
     assert any(label.text()=="👍 2" for label in row.findChildren(main.QLabel))
     assert any("Ayşe" in label.text() and "Toplantı saat kaçta?" in label.text() for label in row.findChildren(main.QLabel))
 
+def test_private_and_group_bubbles_follow_telegram_sender_and_receipt_rules():
+    from academic_chat_manager import main
+    app=QApplication.instance() or QApplication([])
+    private=main.MessageBubbleRow({"chat_kind":"Kişi","sender_name":"Yusuf Batur","text":"Merhaba","date":"2026-11-25T10:30:00+00:00","outgoing":0})
+    group=main.MessageBubbleRow({"chat_kind":"Grup","sender_name":"Ayşe Yılmaz","text":"Duyuru","date":"2026-11-25T10:31:00+00:00","outgoing":0})
+    private_avatar=main.MessageBubbleRow({"chat_kind":"Kişi","sender_name":"Yusuf Batur","text":"Merhaba","date":"2026-11-25T10:30:00+00:00","outgoing":0,"show_sender_avatar":True})
+    sent=main.MessageBubbleRow({"chat_kind":"Kişi","sender_name":"Siz","text":"Gönderildi","date":"2026-11-25T10:32:00+00:00","outgoing":1,"read":False})
+    read=main.MessageBubbleRow({"chat_kind":"Kişi","sender_name":"Siz","text":"Okundu","date":"2026-11-25T10:33:00+00:00","outgoing":1,"read":True})
+    assert private.sender.isHidden() and hasattr(private,"sender_avatar")
+    assert not group.sender.isHidden() and group.sender.text()=="Ayşe Yılmaz" and hasattr(group,"sender_avatar")
+    assert private_avatar.sender.isHidden() and hasattr(private_avatar,"sender_avatar")
+    assert sent.ticks.text()=="✓" and read.ticks.text()=="✓✓"
+
+def test_image_preview_opens_fullscreen_without_automatically_downloading(tmp_path,monkeypatch):
+    from academic_chat_manager import main
+    app=QApplication.instance() or QApplication([])
+    monkeypatch.setattr(main,"Store",lambda:__import__('academic_chat_manager.storage',fromlist=['Store']).Store(tmp_path/"image-preview.sqlite3"))
+    main.PREFS.setValue("onboarding/dismissed",True)
+    w=MainWindow();request={"peer_id":-17,"message_id":21,"media_json":'{"name":"foto.jpg","size":2048,"mime_type":"image/jpeg"}'}
+    item=main.QListWidgetItem();w.messages.addItem(item);w._set_message_bubble(item,{**request,"text":"","outgoing":0,"chat_kind":"Kişi"})
+    preview=w.messages.itemWidget(item).findChild(main.QLabel,"imagePreview")
+    image=QImage(32,24,QImage.Format_ARGB32);image.fill(QColor("#4477aa"));pixmap=main.QPixmap.fromImage(image);preview.setPixmap(pixmap);preview.setText("")
+    opened=[]
+    def capture_preview(dialog):
+        opened.append((dialog.original,dialog.request,dialog.parent()))
+        return main.QDialog.Rejected
+    # The actual dialog is exercised by its separate widget tests; this captures
+    # the preview click path and proves that only its explicit download action
+    # can emit a download request.
+    monkeypatch.setattr(main.FullScreenImageDialog,"exec",capture_preview)
+    downloads=[];w._download_message=lambda target:downloads.append(target)
+    preview.clicked.emit()
+    assert opened and opened[0][1]["peer_id"]==request["peer_id"] and opened[0][1]["message_id"]==request["message_id"] and downloads==[]
+    w.close()
+
+def test_folder_rename_uses_clicked_folder_even_with_other_rows_selected(tmp_path,monkeypatch):
+    from academic_chat_manager import main
+    app=QApplication.instance() or QApplication([])
+    monkeypatch.setattr(main,"Store",lambda:__import__('academic_chat_manager.storage',fromlist=['Store']).Store(tmp_path/"folder-rename.sqlite3"))
+    main.PREFS.setValue("onboarding/dismissed",True)
+    w=MainWindow();first=w.store.create_collection("Üniversite");second=w.store.create_collection("Yapay Zekâ");w.refresh_tree()
+    item=w._tree_items[first];w.tree.blockSignals(True);item.setSelected(True);w._tree_items[second].setSelected(True);w.tree.blockSignals(False)
+    monkeypatch.setattr(w.tree,"itemAt",lambda _pos:item)
+    monkeypatch.setattr(main.QInputDialog,"getText",lambda *args,**kwargs:("Akademik",True))
+    class FakeMenu:
+        def __init__(self,*args):self.actions=[]
+        def addAction(self,*args):
+            action=object();self.actions.append((args[-1],action));return action
+        def addSeparator(self):pass
+        def exec(self,*args):return next(action for label,action in self.actions if label=="Yeniden adlandır")
+    monkeypatch.setattr(main,"QMenu",FakeMenu)
+    w._collection_menu(QPoint(0,0))
+    assert next(row["name"] for row in w.store.collections() if row["id"]==first)=="Akademik"
+    assert w.tree.currentItem().data(0,main.Qt.UserRole)==first
+    w.close()
+
+def test_folder_emoji_picker_contains_a_broad_catalog():
+    from academic_chat_manager import main
+    assert len(main.COLLECTION_ICON_OPTIONS)>500
+    assert all(icon in main.COLLECTION_ICON_OPTIONS for icon in ("📚","🎓","🧪","🏫","🧠","❤️","🐈","🚀"))
+
 def test_clear_attachments_button_preserves_message_and_source_files(tmp_path,monkeypatch):
     from academic_chat_manager import main
     app=QApplication.instance() or QApplication([])

@@ -30,6 +30,9 @@ PREFS=QSettings("RumeliAcademic","AcademicChatManager")
 TREE_NODE_KIND_ROLE=Qt.UserRole+1
 TREE_OWNER_COLLECTION_ROLE=Qt.UserRole+2
 TREE_ICON_ROLE=Qt.UserRole+3
+COLLECTION_ICON_OPTIONS="""📁 📂 🗂️ 🗃️ 🗄️ 📌 📍 🏷️ 🎓 🏫 📚 📖 📝 ✏️ 📎 📋 💼 🧑‍🏫 👨‍🏫 👩‍🏫 👨‍🎓 👩‍🎓 🧑‍🎓 🧠 💻 🖥️ ⌨️ 🖱️ 📱 🌐 🔬 🧪 🧬 🧫 🩺 💊 🏥 ⚙️ 🔧 🛠️ 🧰 🧮 📊 📈 📉 🗓️ 📅 ⏰ ⏳ ✅ ☑️ ✔️ ❌ ❗ ❓ ⚠️ ⭐ 🌟 ✨ 🔥 💡 🎯 🏆 🥇 🏅 🎨 🎭 🎵 🎼 🎬 📷 🖼️ 🎥 🎤 🎧 🎹 🎸 ⚽ 🏀 🏐 🎾 🏓 🏸 🏊 🏃 🚴 🧘 🍎 🍕 ☕ 🍰 🌱 🌳 🌻 🌍 🌈 ☀️ 🌙 ⛅ ❄️ ❤️ 💙 💚 💛 💜 🤍 🖤 👥 👤 🧑‍🤝‍🧑 👪 🏠 🏢 🏛️ 🚀 ✈️ 🚗 🚆 💰 💳 🛒 🎁 🧳 🔑 🔒 🔔 📣 📢 💬 📨 📩 ✉️""".split()
+COLLECTION_ICON_OPTIONS += """🗒️ 📃 📄 📑 🧾 🗞️ 📇 📈 📉 📊 🗃️ 📁 📂 🗂️ 🗄️ 🗑️ 🔖 🏷️ 🔗 🧷 🧵 🪡 🧶 🪢 🪣 🧹 🧺 🪟 🪞 🛋️ 🛏️ 🪑 🚪 🪜 🧯 🛒 🧰 🪛 🪚 🔨 ⚒️ ⚙️ 🪤 🧲 🪝 🧪 🧫 🧬 🔭 🔬 🩻 🩹 🩺 🧴 🧼 🪥 🧽 🧹 🧻 🛟 🧑‍🔬 👩‍🔬 👨‍🔬 🧑‍💻 👩‍💻 👨‍💻 🧑‍🏫 👩‍🏫 👨‍🏫 🧑‍🎓 👩‍🎓 👨‍🎓 🧑‍⚕️ 👩‍⚕️ 👨‍⚕️ 🧑‍🚀 👩‍🚀 👨‍🚀 🧑‍⚖️ 👩‍⚖️ 👨‍⚖️ 🧑‍🔧 👩‍🔧 👨‍🔧 🧑‍🍳 👩‍🍳 👨‍🍳 🧑‍🎨 👩‍🎨 👨‍🎨 🧑‍🚒 👩‍🚒 👨‍🚒 🧑‍✈️ 👩‍✈️ 👨‍✈️ 👥 🫂 🗣️ 👤 👪 🧑‍🤝‍🧑 👭 👫 👬 🧑‍🧑‍🧒‍🧒 🏛️ 🏢 🏫 🏥 🏦 🏭 🏬 🏟️ 🏖️ 🏕️ 🏠 🏡 🏘️ 🏚️ 🏗️ ⛪ 🕌 🛕 🕍 ⛩️ 🕋 🎓 🎒 🧳 🌍 🌎 🌏 🗺️ 🧭 🧱 🛣️ 🚦 🚥 🛤️ 🚉 🚇 🚊 🚍 🚘 🚲 🛴 🛵 🚗 🚕 🚙 🚌 🚎 🚐 🚑 🚒 🚓 🚔 🚚 🚛 🚜 🚄 🚅 🚆 🚇 🚈 🚉 ✈️ 🛫 🛬 🚀 🛸 🛰️ ⛵ 🚤 🛥️ 🚢 ⚓ 🌐 🕸️ 📡 🛜 🔋 🔌 🪫 💻 🖥️ 🖨️ ⌨️ 🖱️ 🖲️ 💽 💾 💿 📀 📼 📱 📲 ☎️ 📞 📟 📠 🔍 🔎 💡 🔦 🕯️ 🪔 🧯 🛢️ 💸 💵 💴 💶 💷 💰 🪙 💳 🧮 📉 📈 📊 🧾 ⚖️ 🪙 🏆 🏅 🥇 🥈 🥉 🎖️ 🏵️ 🎗️ 🎟️ 🎫 🎪 🎭 🩰 🎨 🖌️ 🖍️ 🧵 🪡 🎼 🎵 🎶 🎤 🎧 🎹 🥁 🎷 🎺 🎸 🪕 🎻 🎬 🎥 📽️ 🎞️ 📸 📷 📹 📺 📻 🎙️ 🎚️ 🎛️ 🧩 ♟️ 🎯 🎮 🕹️ 🎲 🃏 🀄 🧸 🪅 🪩 🎉 🎊 🎈 🎁 🎀 🪄 🪅 🧿 💎 🪬 🛡️ ⚔️ 🔮 🪄 🪷 🌸 🌼 🌻 🌷 🪻 🌱 🪴 🌲 🌳 🌴 🌵 🍀 ☘️ 🍁 🍂 🍃 🌾 🌿 🪹 🪺 🪨 🌊 🔥 💧 ☔ 🌈 ☀️ 🌤️ ⛅ 🌥️ ☁️ 🌦️ 🌧️ ⛈️ 🌩️ 🌨️ ❄️ ☃️ ⛄ 🌬️ 🌪️ 🌫️ 🌙 🌛 🌜 🌝 🌚 ⭐ 🌟 ✨ 💫 🌠 🌌 🪐 🌍 🌎 🌏 🌑 🌒 🌓 🌔 🌕 🌖 🌗 🌘 🍎 🍏 🍐 🍊 🍋 🍌 🍉 🍇 🍓 🫐 🍈 🍒 🍑 🥭 🍍 🥥 🥝 🍅 🥑 🥦 🥬 🥒 🌶️ 🫑 🌽 🥕 🫒 🧄 🧅 🥔 🍠 🥐 🥯 🍞 🥖 🧀 🥚 🍳 🥞 🧇 🥓 🥩 🍗 🍖 🌭 🍔 🍟 🍕 🫓 🥪 🥙 🧆 🌮 🌯 🫔 🥗 🥘 🫕 🍝 🍜 🍲 🍛 🍣 🍱 🥟 🦪 🍤 🍙 🍚 🍘 🍥 🥠 🥮 🍢 🍡 🍧 🍨 🍦 🥧 🧁 🍰 🎂 🍮 🍭 🍬 🍫 🍿 🍩 🍪 🌰 🥜 🫘 🍯 🥛 🍼 ☕ 🫖 🍵 🧃 🥤 🧋 🍶 🍺 🍻 🥂 🍷 🥃 🍸 🍹 🧉 🍾 😃 😄 😁 😆 😅 😂 🤣 🥲 🥹 ☺️ 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😜 🤪 😝 🤑 🤗 🤭 🫢 🫣 🤫 🤔 🫡 🤐 🤨 😐 😑 😶 🫥 😏 😒 🙄 😬 🤥 😌 😔 😪 🤤 😴 😷 🤒 🤕 🤢 🤮 🤧 🥵 🥶 🥴 😵 🤯 🤠 🥳 🥸 😎 🤓 🧐 😕 🫤 😟 🙁 ☹️ 😮 😯 😲 😳 🥺 🥹 😦 😧 😨 😰 😥 😢 😭 😱 😖 😣 😞 😓 😩 😫 🥱 😤 😡 😠 🤬 😈 👿 💀 ☠️ 💩 🤡 👻 👽 👾 🤖 🎃 😺 😸 😹 😻 😼 😽 🙀 😿 😾 🙈 🙉 🙊 💌 💘 💝 💖 💗 💓 💞 💕 💟 ❣️ 💔 ❤️‍🔥 ❤️‍🩹 ❤️ 🩷 🧡 💛 💚 💙 🩵 💜 🤎 🖤 🩶 🤍 💯 💢 💥 💫 💦 💨 🕳️ 💬 👁️‍🗨️ 🗨️ 🗯️ 💭 💤 👋 🤚 🖐️ ✋ 🖖 🫱 🫲 🫳 🫴 🫰 🫵 🫶 🤌 🤏 ✌️ 🤞 🫰 🤟 🤘 🤙 👈 👉 👆 🖕 👇 ☝️ 👍 👎 ✊ 👊 🤛 🤜 👏 🙌 🫶 👐 🤲 🤝 🙏 ✍️ 💅 🤳 💪 🦾 🦿 🦵 🦶 👂 🦻 👃 🧠 🫀 🫁 🦷 🦴 👀 👁️ 👅 👄 🫦 🐶 🐱 🐭 🐹 🐰 🦊 🐻 🐼 🐻‍❄️ 🐨 🐯 🦁 🐮 🐷 🐸 🐵 🐔 🐧 🐦 🐤 🦆 🦅 🦉 🦇 🐺 🐗 🐴 🦄 🐝 🪱 🐛 🦋 🐌 🐞 🐜 🪰 🪲 🪳 🦟 🦗 🕷️ 🦂 🐢 🐍 🦎 🦖 🦕 🐙 🦑 🦐 🦞 🦀 🐡 🐠 🐟 🐬 🐳 🦈 🐊 🐅 🐆 🦓 🦍 🦧 🐘 🦛 🦏 🐪 🐫 🦒 🦘 🦬 🐃 🐂 🐄 🐎 🐖 🐏 🐑 🦙 🐐 🦌 🐕 🦮 🐕‍🦺 🐩 🐈 🐈‍⬛ 🪶 🐓 🦃 🦤 🦚 🦜 🪽 🐇 🦝 🦨 🦡 🦫 🦦 🦥 🐁 🐀 🐿️ 🦔 🐾 🐉 🐲 🌵 🎄 🌲 🌳 🌴 🪵 🌱 🌿 ☘️ 🍀 🎍 🪴 🎋 🍃 🍂 🍁 🪺 🪻 🥀 🌺 🌸 🌼 🌷 🪷 🌹 🪸 🪷 🏵️""".split()
+COLLECTION_ICON_OPTIONS=list(dict.fromkeys(COLLECTION_ICON_OPTIONS))
 def _mix_color(foreground: str, background: str, amount: float) -> str:
     fg, bg = QColor(foreground), QColor(background)
     channels = [round(bg.getRgb()[i] * (1 - amount) + fg.getRgb()[i] * amount) for i in range(3)]
@@ -182,11 +185,14 @@ def _theme_stylesheet(dark: bool, accent: str) -> str:
     QLabel#attachmentName{{font-weight:600}}
     QPushButton#attachmentDownload{{text-align:center;color:{highlight};border:1px solid {c['border']};padding:6px 9px}}
     QPushButton#attachmentDownload:disabled{{color:{c['muted']}}}
-    QFrame#incomingBubble{{background:{c['surface']};border:1px solid {c['border']};border-radius:13px}}
-    QFrame#outgoingBubble{{background:{_mix_color(accent, c['surface'], .13 if not dark else .32)};border:1px solid {_mix_color(accent, c['border'], .25)};border-radius:13px}}
+    QFrame#outgoingBubble{{background:{'#2b5278' if dark else '#e6f3ff'};border:0;border-radius:13px}}
+    QFrame#incomingBubble{{background:{'#182533' if dark else '#ffffff'};border:0;border-radius:13px}}
     QLabel#messageSender{{font-weight:650;color:{highlight}}}
     QLabel#messageText{{color:{c['text']}}}
     QLabel#messageTime{{color:{c['muted']}}}
+    QLabel#messageTicks{{color:{'#8fc4fa' if dark else '#4e86d6'};font-weight:700}}
+    QLabel#senderAvatar{{border-radius:16px}}
+    QLabel#imagePreview{{background:#10151c;color:{c['muted']};border-radius:9px}}
     QLabel#reactionSummary{{color:{c['muted']};padding:3px 0}}
     QLabel#replyQuote{{background:{c['raised']};border-left:3px solid {accent};border-radius:5px;padding:5px 8px;color:{c['muted']}}}
     QListWidget#messages::item{{border:0;background:transparent;padding:0}}
@@ -254,6 +260,30 @@ class FileDropTextEdit(QPlainTextEdit):
         if paths:self.filesDropped.emit(paths);event.acceptProposedAction()
         else:super().dropEvent(event)
 
+class ClickableImagePreview(QLabel):
+    clicked=Signal()
+    def mouseReleaseEvent(self,event):
+        if event.button()==Qt.LeftButton:self.clicked.emit();event.accept();return
+        super().mouseReleaseEvent(event)
+
+class FullScreenImageDialog(QDialog):
+    downloadRequested=Signal(dict)
+    def __init__(self,pixmap,request,parent=None):
+        super().__init__(parent);self.original=pixmap;self.request=request;self.setWindowTitle("Görsel önizlemesi");self.setWindowFlags(Qt.Dialog|Qt.FramelessWindowHint)
+        self.setStyleSheet("QDialog { background: #0b1017; } QLabel { color: #e8edf5; }")
+        root=QVBoxLayout(self);root.setContentsMargins(12,8,12,10);root.setSpacing(6)
+        top=QHBoxLayout();top.addWidget(QLabel(safe_filename(decode_media(request.get("media_json"))['name'])));top.addStretch();close=QPushButton("Kapat  ×");close.clicked.connect(self.accept);top.addWidget(close);root.addLayout(top)
+        self.image=QLabel();self.image.setAlignment(Qt.AlignCenter);self.image.setMinimumSize(320,240);root.addWidget(self.image,1)
+        actions=QHBoxLayout();actions.addStretch();self.download_button=QPushButton("Görseli indir…");self.download_button.setObjectName("primary");self.download_button.clicked.connect(self._download);actions.addWidget(self.download_button);root.addLayout(actions)
+        self._scale_image()
+    def _scale_image(self):
+        if self.original and not self.original.isNull() and self.image.size().isValid():
+            self.image.setPixmap(self.original.scaled(self.image.size(),Qt.KeepAspectRatio,Qt.SmoothTransformation))
+    def resizeEvent(self,event):
+        super().resizeEvent(event);self._scale_image()
+    def _download(self):
+        self.downloadRequested.emit(self.request);self.accept()
+
 class MessageBubbleRow(QWidget):
     contextMenuRequested = Signal(QPoint)
     downloadRequested = Signal(dict)
@@ -262,12 +292,14 @@ class MessageBubbleRow(QWidget):
         super().__init__()
         self.message = message
         self.outgoing = bool(message.get("outgoing"))
+        self.is_group=message.get("chat_kind") in ("Grup","Kanal")
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-        row = QHBoxLayout(self); row.setContentsMargins(10, 3, 10, 3); row.setSpacing(0)
+        row = QHBoxLayout(self); row.setContentsMargins(8, 2, 8, 2); row.setSpacing(5)
         self.bubble = QFrame(objectName="outgoingBubble" if self.outgoing else "incomingBubble")
         self.bubble.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Minimum)
-        content = QVBoxLayout(self.bubble); content.setContentsMargins(12, 8, 12, 8); content.setSpacing(5)
-        sender = QLabel("Siz" if self.outgoing else (message.get("sender_name") or "Telegram"), objectName="messageSender")
+        content = QVBoxLayout(self.bubble); content.setContentsMargins(10, 6, 10, 5); content.setSpacing(3)
+        sender = QLabel(message.get("sender_name") or "Telegram", objectName="messageSender")
+        sender.setVisible(self.is_group and not self.outgoing)
         attachments=message.get("attachments")
         if attachments is None:
             metadata=decode_media(message.get("media_json"))
@@ -277,9 +309,15 @@ class MessageBubbleRow(QWidget):
         stamp=_format_local_datetime(message.get("date"),"%H:%M")
         edited=message.get("edit_date") and not message.get("edit_hidden")
         footer = QLabel(("düzenlendi · " if edited else "")+stamp, objectName="messageTime"); footer.setAlignment(Qt.AlignRight)
+        ticks=QLabel("✓✓" if message.get("read") else "✓",objectName="messageTicks");ticks.setVisible(self.outgoing)
         if edited:
             footer.setToolTip("Düzenlenme zamanı: "+_format_local_datetime(message["edit_date"],"%d.%m.%Y %H:%M:%S"))
-        self.body = body; self.sender = sender; self.footer = footer
+        self.body = body; self.sender = sender; self.footer = footer;self.ticks=ticks
+        if not self.outgoing and (self.is_group or message.get("chat_kind") in ("Kişi","Bot")):
+            avatar=QLabel(objectName="senderAvatar");avatar.setFixedSize(30,30)
+            avatar_icon=message.get("sender_avatar_icon") if message.get("show_sender_avatar",True) else None
+            if avatar_icon:avatar.setPixmap(avatar_icon.pixmap(30,30))
+            avatar.setVisible(True);self.sender_avatar=avatar;row.addWidget(avatar,0,Qt.AlignBottom)
         content.addWidget(sender)
         try:reply=json.loads(message.get("reply_json") or "null")
         except (TypeError,json.JSONDecodeError):reply=None
@@ -295,8 +333,8 @@ class MessageBubbleRow(QWidget):
             layout=QVBoxLayout(card);layout.setContentsMargins(9,7,9,7);layout.setSpacing(4)
             mime=str(attachment.get("mime_type") or "").lower()
             if mime.startswith("image/") and attachment.get("peer_id") is not None and attachment.get("message_id"):
-                preview=QLabel("Görsel önizlemesi yükleniyor…",objectName="imagePreview")
-                preview.setAlignment(Qt.AlignCenter);preview.setMinimumSize(160,100);preview.setMaximumSize(420,280)
+                preview=ClickableImagePreview("Görsel önizlemesi yükleniyor…",objectName="imagePreview")
+                preview.setAlignment(Qt.AlignCenter);preview.setMinimumSize(160,100);preview.setMaximumSize(420,280);preview.setCursor(Qt.PointingHandCursor)
                 preview.setProperty("mediaLoaded",False);preview.setProperty("mediaRequest",{"peer_id":attachment.get("peer_id"),"message_id":attachment.get("message_id"),"media_json":json.dumps(attachment,ensure_ascii=False)});layout.addWidget(preview)
             name=QLabel(safe_filename(attachment.get("name")),objectName="attachmentName")
             name.setTextFormat(Qt.PlainText);name.setWordWrap(True);layout.addWidget(name)
@@ -310,7 +348,7 @@ class MessageBubbleRow(QWidget):
             request={"peer_id":attachment.get("peer_id"),"message_id":attachment.get("message_id"),"media_json":json.dumps(attachment,ensure_ascii=False)}
             button.clicked.connect(lambda checked=False,target=request:self.downloadRequested.emit(target))
             self.attachment_buttons.append(button);layout.addWidget(button);content.addWidget(card)
-        content.addWidget(footer)
+        footer_row=QHBoxLayout();footer_row.addStretch();footer_row.addWidget(footer);footer_row.addWidget(ticks);content.addLayout(footer_row)
         self.reactions_label=QLabel("",objectName="reactionSummary")
         self.reactions_label.setTextFormat(Qt.PlainText);self.reactions_label.setWordWrap(True)
         content.addWidget(self.reactions_label)
@@ -346,17 +384,21 @@ class MessageBubbleRow(QWidget):
     def set_bubble_limit(self, width):
         max_content=max(180,width-26);metrics=self.body.fontMetrics()
         longest=max((metrics.horizontalAdvance(line) for line in self.body.text().splitlines()),default=0)
-        content_width=min(max_content,max(220,longest+2))
+        has_media=bool(self.attachment_buttons)
+        content_width=min(max_content,max(220 if has_media else 42,longest+2))
         self.bubble.setMaximumWidth(max_content+26);self.body.setFixedWidth(content_width)
         self.sender.setMaximumWidth(max_content);self.footer.setMaximumWidth(max_content)
         bounds=metrics.boundingRect(QRect(0,0,content_width,10000),Qt.TextWordWrap,self.body.text())
         self.body.setMinimumHeight(max(metrics.height(),bounds.height()+4))
         self.bubble.layout().activate();self.layout().activate();self.adjustSize()
 
+    def set_delivery_read(self,read=True):
+        if self.outgoing:self.ticks.setText("✓✓" if read else "✓")
+
 class MessageListWidget(QListWidget):
     def __init__(self):
         super().__init__(); self.setObjectName("messages"); self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel); self.setWordWrap(True); self.setSpacing(3)
+        self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel); self.setWordWrap(True); self.setSpacing(1)
     def resizeEvent(self, event):
         super().resizeEvent(event)
         QTimer.singleShot(0, self._sync_bubble_widths)
@@ -365,7 +407,7 @@ class MessageListWidget(QListWidget):
         for index in range(self.count()):
             item = self.item(index); row = self.itemWidget(item)
             if row:
-                row.set_bubble_limit(width); item.setSizeHint(QSize(max(1, self.viewport().width()), row.sizeHint().height() + 28))
+                row.set_bubble_limit(width); item.setSizeHint(QSize(max(1, self.viewport().width()), row.sizeHint().height() + 8))
 
 class ConnectDialog(QDialog):
     def __init__(self,parent=None):
@@ -644,6 +686,10 @@ class MainWindow(QMainWindow):
                     if item.data(Qt.UserRole)==peer_id:
                         item.setIcon(icon or self._avatar_icon((self.store.chat(peer_id) or {}).get("title","Telegram")))
                 if self.selected_peer==peer_id and icon:self.chat_avatar.setPixmap(icon.pixmap(42,42))
+                if self.context_mode=="chat" and self.selected_peer is not None:
+                    current_kind=(self.store.chat(self.selected_peer) or {}).get("kind")
+                    if (current_kind in ("Kişi","Bot") and int(self.selected_peer)==peer_id) or current_kind in ("Grup","Kanal"):
+                        self._render_messages(int(self.selected_peer))
         except Exception:
             if self.telegram is service:self._avatar_cache[peer_id]=None
         finally:self._avatar_loading.discard(peer_id)
@@ -791,7 +837,9 @@ class MainWindow(QMainWindow):
             return _line_icon(name,stroke,18,muted,stroke)
         menu=QMenu(self.tree);send=menu.addAction(menu_icon("bulk"),"Seçili klasör/sohbetlere mesaj gönder…");invite=menu.addAction(menu_icon("group"),"Davet bağlantıları oluştur…")
         new=rename=move_action=up_action=down_action=color_action=icon_action=delete=remove=None
-        if len(nodes)==1 and kind=="collection":
+        # Folder actions belong to the row under the pointer. Keep them available
+        # even when a multi-selection exists for bulk send/invite actions.
+        if kind=="collection":
             menu.addSeparator();new=menu.addAction(menu_icon("plus"),"Alt klasör oluştur");rename=menu.addAction(menu_icon("edit"),"Yeniden adlandır");move_action=menu.addAction(menu_icon("folders"),"Başka klasöre taşı…");up_action=menu.addAction(menu_icon("up"),"Sıralamada yukarı al");down_action=menu.addAction(menu_icon("down"),"Sıralamada aşağı al");color_action=menu.addAction(menu_icon("image"),"Renk seç…");icon_action=menu.addAction(menu_icon("chats"),"Simge seç…");delete=menu.addAction(menu_icon("trash",True),"Klasörü sil")
         elif len(nodes)==1 and kind=="chat":
             menu.addSeparator();remove=menu.addAction(menu_icon("close",True),"Sohbeti bu klasörden çıkar")
@@ -808,9 +856,20 @@ class MainWindow(QMainWindow):
             name,ok=QInputDialog.getText(self,"Alt klasör","Klasör adı:")
             if ok and name:self.store.create_collection(name,int(cid));self.refresh_tree()
         elif chosen==rename:
-            old_name=item.text().split("  ",1)[-1].split("  (")[0]
-            name,ok=QInputDialog.getText(self,"Klasörü yeniden adlandır","Yeni ad:",text=old_name)
-            if ok and name:self.store.rename_collection(int(cid),name);self.refresh_tree()
+            folder=next((row for row in self.store.collections() if int(row["id"])==int(cid)),None)
+            if not folder:
+                self.statusBar().showMessage("Klasör artık bulunamadı; klasör listesini yenileyin",5000);return
+            name,ok=QInputDialog.getText(self,"Klasörü yeniden adlandır","Yeni ad:",text=folder["name"])
+            if ok:
+                try:
+                    name=name.strip()
+                    if not name:raise ValueError("Klasör adı boş olamaz")
+                    self.store.rename_collection(int(cid),name);self.current_collection=int(cid);self.refresh_tree()
+                    renamed_item=self._tree_items.get(int(cid))
+                    if renamed_item:
+                        self.tree.clearSelection();renamed_item.setSelected(True);self.tree.setCurrentItem(renamed_item)
+                    self.statusBar().showMessage(f'Klasör "{name}" olarak yeniden adlandırıldı',5000)
+                except Exception as e:QMessageBox.warning(self,"Klasör yeniden adlandırılamadı",str(e))
         elif chosen==delete:
             if QMessageBox.question(self,"Klasörü sil","Klasör ve alt klasörleri silinsin mi? Telegram sohbetleri etkilenmez.") == QMessageBox.Yes:self.store.delete_collection(int(cid));self.current_collection=None;self.refresh_tree()
         elif chosen==remove:
@@ -832,10 +891,10 @@ class MainWindow(QMainWindow):
                 with self.store.db() as db:db.execute("UPDATE collections SET color=? WHERE id=?",(color.name(),int(cid)))
                 self.refresh_tree()
         elif chosen==icon_action:
-            options=["📁","📂","🎓","📚","🧠","💻","🔬","🧪","🗂️","📌","⭐","✅","✉️","👥","🏫","🌐"]
-            chooser=QInputDialog(self);chooser.setWindowTitle("Klasör simgesi");chooser.setLabelText("Hazır simge seçin veya kutuya özel bir emoji/metin yazın:");chooser.setComboBoxItems(options);chooser.setComboBoxEditable(True);chooser.setTextValue("📁")
+            chooser=QInputDialog(self);chooser.setWindowTitle("Klasör simgesi");chooser.setLabelText("Geniş emoji listesinden seçin veya emoji yazın. Windows emoji paneli: Win + .");chooser.setComboBoxItems(COLLECTION_ICON_OPTIONS);chooser.setComboBoxEditable(True);chooser.setTextValue("📁")
             if chooser.exec()==QDialog.Accepted and chooser.textValue().strip():
-                with self.store.db() as db:db.execute("UPDATE collections SET icon=? WHERE id=?",(chooser.textValue().strip()[:8],int(cid)))
+                icon=chooser.textValue().strip()
+                with self.store.db() as db:db.execute("UPDATE collections SET icon=? WHERE id=?",(icon,int(cid)))
                 self.refresh_tree()
     def _start_invite_link_creation(self,collection_ids,peer_ids):
         """Resolve selected folder/chat targets and start creating their invite links."""
@@ -965,10 +1024,30 @@ class MainWindow(QMainWindow):
     def _render_messages(self,peer_id):
         if self.context_mode!="chat" or self.selected_peer!=peer_id:return
         self.messages.clear()
+        chat=self.store.chat(peer_id) or {};kind=chat.get("kind")
+        previous=None
         for m in self.store.messages(peer_id,100):
+            m["chat_kind"]=kind
+            if self.telegram:
+                read_checker=getattr(self.telegram,"is_message_read",None)
+                if read_checker:m["read"]=bool(m.get("read") or read_checker(peer_id,m.get("message_id")))
+            if kind in ("Grup","Kanal","Kişi","Bot") and not m.get("outgoing"):
+                sender_id=m.get("sender_id") if kind in ("Grup","Kanal") else peer_id
+                name=m.get("sender_name") or "Telegram"
+                previous_time=_local_datetime(previous.get("date")) if previous else None
+                current_time=_local_datetime(m.get("date"))
+                same_cluster=bool(previous_time and current_time and 0<=(current_time-previous_time).total_seconds()<=300)
+                same_sender=bool(same_cluster and previous and not previous.get("outgoing") and (kind not in ("Grup","Kanal") or previous.get("sender_id")==m.get("sender_id")))
+                m["show_sender_avatar"]=not same_sender
+                m["sender_avatar_icon"]=self._avatar_cache.get(int(sender_id)) if sender_id else None
+                if m["show_sender_avatar"] and not m.get("sender_avatar_icon"):m["sender_avatar_icon"]=self._avatar_icon(name)
             self._append_message_bubble(m)
+            previous=m
         self.messages.scrollToBottom()
     def _append_message_bubble(self,message):
+        message=dict(message)
+        if message.get("chat_kind") is None and message.get("peer_id") is not None:
+            message["chat_kind"]=(self.store.chat(message["peer_id"]) or {}).get("kind")
         item=QListWidgetItem()
         self.messages.addItem(item)
         self._set_message_bubble(item,message)
@@ -982,8 +1061,24 @@ class MainWindow(QMainWindow):
         row.downloadRequested.connect(lambda target:asyncio.create_task(self._download_message(target)))
         for preview in row.findChildren(QLabel,"imagePreview"):
             request=preview.property("mediaRequest")
-            if request:asyncio.create_task(self._load_image_preview(preview,request))
-        item.setSizeHint(QSize(max(1,self.messages.viewport().width()),row.sizeHint().height()+28))
+            if request:
+                preview.clicked.connect(lambda target=preview,media=request:self._show_fullscreen_preview(target,media))
+                try:asyncio.get_running_loop().create_task(self._load_image_preview(preview,request))
+                except RuntimeError:pass
+        if row.is_group and not row.outgoing and item.data(Qt.UserRole).get("sender_id"):
+            sender_id=int(item.data(Qt.UserRole)["sender_id"])
+            if sender_id not in self._avatar_cache and self.telegram:
+                try:asyncio.get_running_loop().create_task(self._ensure_chat_avatar(sender_id))
+                except RuntimeError:pass
+        item.setSizeHint(QSize(max(1,self.messages.viewport().width()),row.sizeHint().height()+8))
+
+    def _show_fullscreen_preview(self,preview,request):
+        pixmap=preview.pixmap()
+        if pixmap is None or pixmap.isNull():
+            self.statusBar().showMessage("Görsel önizlemesi henüz hazır değil",3000);return
+        dialog=FullScreenImageDialog(pixmap,request,self)
+        dialog.downloadRequested.connect(lambda target:asyncio.create_task(self._download_message(target)))
+        dialog.setWindowState(dialog.windowState()|Qt.WindowFullScreen);dialog.exec()
 
     async def _load_image_preview(self,label,request):
         if not self.telegram or not self.telegram.client or not self.telegram.client.is_connected():
@@ -1028,7 +1123,8 @@ class MainWindow(QMainWindow):
             last=sent[-1] if isinstance(sent,list) else sent
             if last:
                 summary=text or ("Dosya: "+Path(files[-1]).name if files else "Mesaj")
-                self.store.update_last_message(peer_id,summary,last.date.isoformat() if getattr(last,"date",None) else datetime.now(timezone.utc).isoformat(),outgoing=True)
+                read_checker=getattr(self.telegram,"is_message_read",lambda _peer,_message:False)
+                self.store.update_last_message(peer_id,summary,last.date.isoformat() if getattr(last,"date",None) else datetime.now(timezone.utc).isoformat(),outgoing=True,read=read_checker(peer_id,last.id),message_id=last.id)
                 self.refresh_chats()
             if generation!=self._chat_open_generation or self.selected_peer!=peer_id:return
             self.message_input.clear();self._clear_chat_files();self._clear_reply();self.message_input.setPlaceholderText("Mesaj yazın veya dosyaları buraya sürükleyin…");await self.load_history(peer_id,generation=generation,reply_context=sent_reply_context)
@@ -1349,7 +1445,7 @@ class MainWindow(QMainWindow):
             self._avatar_cache.clear()
         if user_id is not None:self.store.set_preference('telegram/user_id',int(user_id))
         name=" ".join(filter(None,[getattr(user,'first_name',None),getattr(user,'last_name',None)])) or getattr(user,'username',None) or "Telegram hesabı";self.account_label.setText(name);self.connection_label.setText("●  Telegram bağlı");self.connection_label.setStyleSheet("color:#18833b;font-weight:600");self.account_status.setText(f"Bağlı hesap: {name}");self.statusBar().showMessage("Telegram hesabı bağlandı")
-        if self.telegram:self.telegram.start_updates(self._on_live_message,self._on_message_edited)
+        if self.telegram:self.telegram.start_updates(self._on_live_message,self._on_message_edited,self._on_message_read)
         return True
     async def _discard_new_account_session(self):
         if self.telegram:
@@ -1359,11 +1455,22 @@ class MainWindow(QMainWindow):
     def _on_live_message(self,row):
         self.store.cache_messages([{k:row.get(k) for k in ['peer_id','message_id','sender_id','sender_name','text','date','outgoing','media_json','reactions_json','edit_date','edit_hidden']}])
         if not self.store.chat(row['peer_id']):
-            self.store.upsert_chats([{"peer_id":row['peer_id'],"access_hash":None,"title":row.get('chat_title') or "Telegram sohbet","kind":"Grup" if row['peer_id']<0 else "Kişi","username":None,"can_send":1,"unread_count":0,"last_message":row['text'] or "Medya","last_message_at":row['date'],"last_message_outgoing":row['outgoing'],"last_message_read":0}])
-        else:self.store.update_last_message(row['peer_id'],row['text'] or "Medya",row['date'],incoming=not row['outgoing'],outgoing=bool(row['outgoing']))
+            self.store.upsert_chats([{"peer_id":row['peer_id'],"access_hash":None,"title":row.get('chat_title') or "Telegram sohbet","kind":"Grup" if row['peer_id']<0 else "Kişi","username":None,"can_send":1,"unread_count":0,"last_message":row['text'] or "Medya","last_message_at":row['date'],"last_message_id":row['message_id'],"last_message_outgoing":row['outgoing'],"last_message_read":row.get('read',0)}])
+        else:self.store.update_last_message(row['peer_id'],row['text'] or "Medya",row['date'],incoming=not row['outgoing'],outgoing=bool(row['outgoing']),read=row.get('read',False),message_id=row['message_id'])
         self.refresh_chats()
         if self.selected_peer==row['peer_id']:self._render_messages(row['peer_id'])
         if not row['outgoing']:self._show_local_notification(row)
+    def _on_message_read(self,peer_id,max_message_id):
+        """Reflect Telegram's outgoing read receipt in the chat list and open history."""
+        self.store.mark_last_message_read(peer_id,max_message_id)
+        self.refresh_chats()
+        if self.selected_peer!=peer_id or self.context_mode!="chat":return
+        for index in range(self.messages.count()):
+            item=self.messages.item(index);data=item.data(Qt.UserRole) or {}
+            if data.get("kind") or not data.get("outgoing") or int(data.get("message_id") or 0)>int(max_message_id):continue
+            data["read"]=True;item.setData(Qt.UserRole,data)
+            widget=self.messages.itemWidget(item)
+            if widget:widget.set_delivery_read(True)
     def _on_message_edited(self,row):
         """Edits are not new messages: no unread increment or arrival notification."""
         if not row.get("edit_date"):return

@@ -28,7 +28,7 @@ class Store:
         with self.db() as c:
             c.execute("PRAGMA journal_mode=WAL")
             c.executescript('''
-            CREATE TABLE IF NOT EXISTS chats(peer_id INTEGER PRIMARY KEY, access_hash INTEGER, title TEXT NOT NULL, kind TEXT NOT NULL, username TEXT, can_send INTEGER NOT NULL DEFAULT 0, unread_count INTEGER NOT NULL DEFAULT 0, last_message TEXT, last_message_at TEXT, last_message_outgoing INTEGER NOT NULL DEFAULT 0, last_message_read INTEGER NOT NULL DEFAULT 0, hidden INTEGER NOT NULL DEFAULT 0, available INTEGER NOT NULL DEFAULT 1, synced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+            CREATE TABLE IF NOT EXISTS chats(peer_id INTEGER PRIMARY KEY, access_hash INTEGER, title TEXT NOT NULL, kind TEXT NOT NULL, username TEXT, can_send INTEGER NOT NULL DEFAULT 0, unread_count INTEGER NOT NULL DEFAULT 0, last_message TEXT, last_message_at TEXT, last_message_id INTEGER, last_message_outgoing INTEGER NOT NULL DEFAULT 0, last_message_read INTEGER NOT NULL DEFAULT 0, hidden INTEGER NOT NULL DEFAULT 0, available INTEGER NOT NULL DEFAULT 1, synced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
             CREATE TABLE IF NOT EXISTS collections(id INTEGER PRIMARY KEY AUTOINCREMENT, parent_id INTEGER REFERENCES collections(id) ON DELETE CASCADE, name TEXT NOT NULL, color TEXT NOT NULL DEFAULT '#A90025', icon TEXT NOT NULL DEFAULT '📁', sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
             CREATE TABLE IF NOT EXISTS collection_chats(collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE, peer_id INTEGER NOT NULL REFERENCES chats(peer_id) ON DELETE CASCADE, sort_order INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(collection_id,peer_id));
             CREATE TABLE IF NOT EXISTS preferences(key TEXT PRIMARY KEY,value TEXT NOT NULL);
@@ -43,6 +43,7 @@ class Store:
             target_columns={r[1] for r in c.execute("PRAGMA table_info(send_targets)")}
             if "attachments_json" not in target_columns:c.execute("ALTER TABLE send_targets ADD COLUMN attachments_json TEXT")
             chat_columns={r[1] for r in c.execute("PRAGMA table_info(chats)")}
+            if "last_message_id" not in chat_columns:c.execute("ALTER TABLE chats ADD COLUMN last_message_id INTEGER")
             if "last_message_outgoing" not in chat_columns:c.execute("ALTER TABLE chats ADD COLUMN last_message_outgoing INTEGER NOT NULL DEFAULT 0")
             if "last_message_read" not in chat_columns:c.execute("ALTER TABLE chats ADD COLUMN last_message_read INTEGER NOT NULL DEFAULT 0")
             message_columns={r[1] for r in c.execute("PRAGMA table_info(cached_messages)")}
@@ -59,17 +60,19 @@ class Store:
                          WHERE j.collection_id IS NOT NULL""")
     # Chat cache
     def upsert_chats(self, rows, complete_sync=False):
-        rows=[{"last_message_outgoing":0,"last_message_read":0,**row} for row in rows]
+        rows=[{"last_message_id":None,"last_message_outgoing":0,"last_message_read":0,**row} for row in rows]
         with self.db() as c:
             if complete_sync:c.execute("UPDATE chats SET available=0")
-            c.executemany('''INSERT INTO chats(peer_id,access_hash,title,kind,username,can_send,unread_count,last_message,last_message_at,last_message_outgoing,last_message_read,available,synced_at) VALUES(:peer_id,:access_hash,:title,:kind,:username,:can_send,:unread_count,:last_message,:last_message_at,:last_message_outgoing,:last_message_read,1,CURRENT_TIMESTAMP) ON CONFLICT(peer_id) DO UPDATE SET access_hash=excluded.access_hash,title=excluded.title,kind=excluded.kind,username=excluded.username,can_send=excluded.can_send,unread_count=excluded.unread_count,last_message=excluded.last_message,last_message_at=excluded.last_message_at,last_message_outgoing=excluded.last_message_outgoing,last_message_read=excluded.last_message_read,available=1,synced_at=CURRENT_TIMESTAMP''',rows)
+            c.executemany('''INSERT INTO chats(peer_id,access_hash,title,kind,username,can_send,unread_count,last_message,last_message_at,last_message_id,last_message_outgoing,last_message_read,available,synced_at) VALUES(:peer_id,:access_hash,:title,:kind,:username,:can_send,:unread_count,:last_message,:last_message_at,:last_message_id,:last_message_outgoing,:last_message_read,1,CURRENT_TIMESTAMP) ON CONFLICT(peer_id) DO UPDATE SET access_hash=excluded.access_hash,title=excluded.title,kind=excluded.kind,username=excluded.username,can_send=excluded.can_send,unread_count=excluded.unread_count,last_message=excluded.last_message,last_message_at=excluded.last_message_at,last_message_id=excluded.last_message_id,last_message_outgoing=excluded.last_message_outgoing,last_message_read=excluded.last_message_read,available=1,synced_at=CURRENT_TIMESTAMP''',rows)
     def chats(self, query="", kind=None, include_hidden=False):
         sql="SELECT * FROM chats WHERE available=1 AND (? OR hidden=0) AND (? IS NULL OR kind=?) AND (title LIKE ? OR COALESCE(last_message,'') LIKE ?) ORDER BY COALESCE(last_message_at,'') DESC,title COLLATE NOCASE"
         with self.db() as c:return [dict(r) for r in c.execute(sql,(include_hidden,kind,kind,f"%{query}%",f"%{query}%"))]
     def chat(self,peer_id):
         with self.db() as c:r=c.execute("SELECT * FROM chats WHERE peer_id=?",(peer_id,)).fetchone(); return dict(r) if r else None
-    def update_last_message(self,peer_id,text,date,incoming=False,outgoing=False,read=False):
-        with self.db() as c:c.execute("UPDATE chats SET last_message=?,last_message_at=?,last_message_outgoing=?,last_message_read=?,unread_count=unread_count+? WHERE peer_id=?",(text,date,int(bool(outgoing)),int(bool(read)),int(bool(incoming)),peer_id))
+    def update_last_message(self,peer_id,text,date,incoming=False,outgoing=False,read=False,message_id=None):
+        with self.db() as c:c.execute("UPDATE chats SET last_message=?,last_message_at=?,last_message_id=?,last_message_outgoing=?,last_message_read=?,unread_count=unread_count+? WHERE peer_id=?",(text,date,message_id,int(bool(outgoing)),int(bool(read)),int(bool(incoming)),peer_id))
+    def mark_last_message_read(self,peer_id,max_message_id):
+        with self.db() as c:return c.execute("UPDATE chats SET last_message_read=1 WHERE peer_id=? AND last_message_outgoing=1 AND last_message_id IS NOT NULL AND last_message_id<=?",(peer_id,int(max_message_id))).rowcount>0
     def clear_unread(self,peer_id):
         with self.db() as c:c.execute("UPDATE chats SET unread_count=0 WHERE peer_id=?",(peer_id,))
     def is_in_any_collection(self,peer_id):

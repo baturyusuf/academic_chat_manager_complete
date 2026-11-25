@@ -81,7 +81,7 @@ def next_reactions(message,emoji,limit):
 
 class TelegramService:
     def __init__(self,session_path:Path):
-        self.session_path=Path(session_path); self.client=None; self._code_hash=None; self._phone=None; self._dialogs={}; self.on_message=None
+        self.session_path=Path(session_path); self.client=None; self._code_hash=None; self._phone=None; self._dialogs={}; self._read_outbox_max_ids={}; self.on_message=None
         self._reaction_lock=asyncio.Lock();self._reaction_limit_cache=None
     async def connect(self,api_id:int,api_hash:str):
         self._reaction_limit_cache=None
@@ -113,12 +113,15 @@ class TelegramService:
             can_send=not getattr(ent,"restricted",False) and not getattr(ent,"left",False) and not (isinstance(ent,types.Channel) and getattr(ent,"broadcast",False) and not (getattr(ent,"creator",False) or getattr(getattr(ent,"admin_rights",None),"post_messages",False)))
             msg=d.message
             outgoing=bool(getattr(msg,"out",False));read_max=int(getattr(d.dialog,"read_outbox_max_id",0) or 0)
-            row={"peer_id":peer_id,"access_hash":access_hash,"title":d.name or "(İsimsiz sohbet)","kind":kind,"username":getattr(ent,"username",None),"can_send":int(can_send),"unread_count":d.unread_count or 0,"last_message":getattr(msg,"message",None) or ("Medya" if getattr(msg,"media",None) else ""),"last_message_at":msg.date.isoformat() if msg and msg.date else None,"last_message_outgoing":int(outgoing),"last_message_read":int(outgoing and msg is not None and msg.id<=read_max)}
+            self._read_outbox_max_ids[peer_id]=max(self._read_outbox_max_ids.get(peer_id,0),read_max)
+            row={"peer_id":peer_id,"access_hash":access_hash,"title":d.name or "(İsimsiz sohbet)","kind":kind,"username":getattr(ent,"username",None),"can_send":int(can_send),"unread_count":d.unread_count or 0,"last_message":getattr(msg,"message",None) or ("Medya" if getattr(msg,"media",None) else ""),"last_message_at":msg.date.isoformat() if msg and msg.date else None,"last_message_id":getattr(msg,"id",None),"last_message_outgoing":int(outgoing),"last_message_read":int(outgoing and msg is not None and msg.id<=read_max)}
             result.append(row); self._dialogs[peer_id]=ent
         return result
     def _entity(self,peer_id):
         if peer_id in self._dialogs:return self._dialogs[peer_id]
         return int(peer_id)
+    def is_message_read(self,peer_id,message_id):
+        return bool(message_id and int(message_id)<=self._read_outbox_max_ids.get(int(peer_id),0))
     async def history(self,peer_id,limit=50,before_id=None):
         msgs=await self.client.get_messages(self._entity(peer_id),limit=limit,max_id=before_id or 0)
         rows=[]
@@ -130,7 +133,7 @@ class TelegramService:
             file=media_metadata(m)
             reactions=reaction_rows(m)
             reply_id=getattr(getattr(m,"reply_to",None),"reply_to_msg_id",None)
-            rows.append({"peer_id":peer_id,"message_id":m.id,"sender_id":m.sender_id,"sender_name":sender_name,"text":m.message or "","date":m.date.isoformat() if m.date else None,"outgoing":int(m.out),"media_json":__import__('json').dumps(file,ensure_ascii=False) if file else None,"reactions_json":__import__('json').dumps(reactions,ensure_ascii=False),"reply_to_message_id":reply_id,**edit_metadata(m),"message":m})
+            rows.append({"peer_id":peer_id,"message_id":m.id,"sender_id":m.sender_id,"sender_name":sender_name,"text":m.message or "","date":m.date.isoformat() if m.date else None,"outgoing":int(m.out),"read":int(bool(m.out and self.is_message_read(peer_id,m.id))),"media_json":__import__('json').dumps(file,ensure_ascii=False) if file else None,"reactions_json":__import__('json').dumps(reactions,ensure_ascii=False),"reply_to_message_id":reply_id,**edit_metadata(m),"message":m})
         return rows
     async def send_text(self,peer_id,text,reply_to=None):return await self.client.send_message(self._entity(peer_id),text,reply_to=reply_to)
     async def export_chat_invite_link(self,peer_id,access_hash=None):
@@ -278,13 +281,13 @@ class TelegramService:
     async def edit_message(self,peer_id,message_id,text):return await self.client.edit_message(self._entity(peer_id),message_id,text)
     async def delete_message(self,peer_id,message_id,revoke=True):return await self.client.delete_messages(self._entity(peer_id),message_id,revoke=revoke)
     async def search_messages(self,peer_id,query,limit=50):return await self.client.get_messages(self._entity(peer_id),search=query,limit=limit)
-    def start_updates(self,handler,edit_handler=None):
+    def start_updates(self,handler,edit_handler=None,read_handler=None):
         """Forward Telegram message updates to the UI without changing read state."""
         async def on_new_message(event):
             m=event.message; peer_id=utils.get_peer_id(event.message.peer_id); sender=getattr(m,"sender",None)
             name=(" ".join(filter(None,[getattr(sender,"first_name",None),getattr(sender,"last_name",None)])) or getattr(sender,"title",None)) if sender else ("Siz" if m.out else str(m.sender_id or ""))
             media=media_metadata(m)
-            row={"peer_id":peer_id,"chat_title":getattr(event.chat,"title",None) or getattr(event.chat,"first_name",None) or name,"message_id":m.id,"sender_id":m.sender_id,"sender_name":name,"text":m.message or "","date":m.date.isoformat() if m.date else None,"outgoing":int(m.out),"media_json":__import__('json').dumps(media,ensure_ascii=False) if media else None,"reactions_json":__import__('json').dumps(reaction_rows(m),ensure_ascii=False),**edit_metadata(m),"message":m}
+            row={"peer_id":peer_id,"chat_title":getattr(event.chat,"title",None) or getattr(event.chat,"first_name",None) or name,"message_id":m.id,"sender_id":m.sender_id,"sender_name":name,"text":m.message or "","date":m.date.isoformat() if m.date else None,"outgoing":int(m.out),"read":int(bool(m.out and self.is_message_read(peer_id,m.id))),"media_json":__import__('json').dumps(media,ensure_ascii=False) if media else None,"reactions_json":__import__('json').dumps(reaction_rows(m),ensure_ascii=False),**edit_metadata(m),"message":m}
             result=handler(row)
             if hasattr(result,"__await__"):await result
         self.client.add_event_handler(on_new_message,events.NewMessage())
@@ -295,6 +298,16 @@ class TelegramService:
                 result=edit_handler(row)
                 if hasattr(result,"__await__"):await result
             self.client.add_event_handler(on_edited_message,events.MessageEdited())
+        if read_handler is not None:
+            async def on_message_read(event):
+                if not getattr(event,"outbox",False):return
+                peer=getattr(event,"peer",None);max_id=getattr(event,"max_id",None)
+                if peer is None or not max_id:return
+                peer_id=utils.get_peer_id(peer)
+                self._read_outbox_max_ids[peer_id]=max(self._read_outbox_max_ids.get(peer_id,0),int(max_id))
+                result=read_handler(peer_id,int(max_id))
+                if hasattr(result,"__await__"):await result
+            self.client.add_event_handler(on_message_read,events.MessageRead())
     async def disconnect(self):
         if self.client:await self.client.disconnect();self.client=None
     async def log_out(self):

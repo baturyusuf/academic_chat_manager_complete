@@ -33,12 +33,22 @@ def test_full_sync_marks_missing_peers_unavailable_without_losing_folder_members
 
 def test_last_message_receipt_state_is_persisted_and_legacy_rows_default_cleanly(store):
     add_chat(store,-5003,"Outgoing")
-    store.update_last_message(-5003,"Sent", "2026-11-25T10:00:00+00:00", outgoing=True, read=True)
+    store.update_last_message(-5003,"Sent", "2026-11-25T10:00:00+00:00", outgoing=True, read=False, message_id=44)
     assert store.chat(-5003)["last_message_outgoing"]==1
+    assert store.chat(-5003)["last_message_read"]==0
+    assert store.chat(-5003)["last_message_id"]==44
+    assert store.mark_last_message_read(-5003,44)
     assert store.chat(-5003)["last_message_read"]==1
     add_chat(store,-5004,"Incoming")
     assert store.chat(-5004)["last_message_outgoing"]==0
     assert store.chat(-5004)["last_message_read"]==0
+
+def test_chat_upsert_migrates_legacy_last_message_receipt_columns(tmp_path):
+    path=tmp_path/"legacy-chat-receipt.sqlite3";store=Store(path)
+    with store.db() as db:db.execute("ALTER TABLE chats DROP COLUMN last_message_id")
+    reopened=Store(path)
+    add_chat(reopened,-5005,"Legacy")
+    assert reopened.chat(-5005)["last_message_id"] is None
 def test_preferences_persist_between_store_instances(tmp_path):
     path=tmp_path/"prefs.sqlite";Store(path).set_preference("appearance/font_size",16)
     assert Store(path).preference("appearance/font_size")==16
