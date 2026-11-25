@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "academic-chat-manager"
+version = "0.1.0"
+description = "Academic Telegram desktop chat manager"
+requires-python = ">=3.10"
+dynamic = ["dependencies"]
+
+[tool.setuptools]
+packages = ["academic_chat_manager"]
+package-dir = {academic_chat_manager = "."}
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools.package-data]
+academic_chat_manager = ["assets/*.ico", "assets/*.png"]

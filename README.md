@@ -27,16 +27,19 @@ API ID/Hash, Telegram'ın `my.telegram.org` geliştirici sayfasından alınır. 
 
 Windows 10/11 x64 ortamında `Build-Windows.cmd` dosyasına çift tıklayın veya açık bir PowerShell penceresinde `./build_windows.ps1` çalıştırın. Python 3.12 x64 ve internet bağlantısı gerekir; ilk derlemede paketlerin indirilmesi birkaç dakika sürebilir. Derleme penceresi sonuç gösterilene kadar açık kalır. Hata oluşursa ayrıntılar `build_windows.log` dosyasına yazılır. PyInstaller `dist/AkademikSohbetYoneticisi/` portable klasörünü ve yanında bağımlılıkları içeren tek dosyalı `dist/AkademikSohbetYoneticisi-OneFile.exe` sürümünü üretir. Klasör sürümünü dağıtırken tüm klasörü koruyun; tek dosyalı EXE tek başına çalışır.
 
-GitHub Actions iş akışı `.github/workflows/windows-build.yml` Windows runner'da testleri çalıştırıp portable ZIP ve tek dosyalı EXE artifact'lerini üretir. Bu geliştirme oturumu Linux üzerinde çalıştığı ve bağlanmış bir uygulama deposu bulunmadığı için Windows build iş akışı bu oturumda çalıştırılmadı; burada Windows `.exe` üretildiği iddia edilmemektedir.
+GitHub Actions iş akışı `.github/workflows/windows-build.yml`, `main` dalına yapılan push işlemlerinde, pull request'lerde ve elle başlatıldığında Windows runner üzerinde bağımlılık ve sözdizimi kontrollerini, otomatik testleri ve başarılı testlerin ardından portable ZIP ile tek dosyalı EXE derlemelerini gerçekleştirir. Sonuçlar ilgili Actions çalıştırmasının artifact bölümünde yer alır; gerçek Telegram hesabıyla uçtan uca doğrulama ayrıca yapılmalıdır.
 
 ## Testler
 
 ```bash
 python -m pip install -r requirements-dev.txt
+python -m pip install --no-deps -e .
 QT_QPA_PLATFORM=offscreen python -m pytest tests -q
 ```
 
 Testler SQLite klasör hiyerarşisini, döngü engellemeyi, sohbet silinmeden koleksiyondan çıkarılmasını, gizleme, kuyruk/iptal/FloodWait davranışını ve UI açılışını kontrol eder. Gerçek Telegram hesabıyla E2E test için API kimlik bilgileri ve kullanıcı tarafından seçilmiş bir test sohbeti gerekir; bu testler otomatik mesaj göndermez.
+
+Windows PowerShell'de son satır yerine `$env:QT_QPA_PLATFORM = 'offscreen'` ve `python -m pytest tests -q` komutlarını çalıştırın. Editable kurulum, depo klasörünün adı farklı olsa bile `academic_chat_manager` importlarının çalışmasını sağlar.
 
 ## Mimari
 
