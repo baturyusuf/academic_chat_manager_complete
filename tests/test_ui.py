@@ -1,4 +1,4 @@
-import os
+import os, asyncio, pytest
 os.environ.setdefault("QT_QPA_PLATFORM","offscreen")
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt, QPoint, QBuffer, QIODevice
@@ -305,6 +305,56 @@ def test_folder_emoji_picker_contains_a_broad_catalog():
     from academic_chat_manager import main
     assert len(main.COLLECTION_ICON_OPTIONS)>500
     assert all(icon in main.COLLECTION_ICON_OPTIONS for icon in ("📚","🎓","🧪","🏫","🧠","❤️","🐈","🚀"))
+
+@pytest.mark.asyncio
+async def test_loading_group_sender_avatar_updates_bubble_without_rebuilding_message_list(tmp_path,monkeypatch):
+    from types import SimpleNamespace
+    from academic_chat_manager import main
+    app=QApplication.instance() or QApplication([])
+    monkeypatch.setattr(main,"Store",lambda:__import__('academic_chat_manager.storage',fromlist=['Store']).Store(tmp_path/"avatar-refresh.sqlite3"))
+    main.PREFS.setValue("onboarding/dismissed",True)
+    w=MainWindow();w.selected_peer=-42;w.context_mode="chat"
+    w.store.upsert_chats([{"peer_id":-42,"access_hash":None,"title":"Grup","kind":"Grup","username":None,"can_send":1,"unread_count":0,"last_message":"","last_message_at":None}])
+    fallback=w._avatar_icon("Ayşe");w._append_message_bubble({"peer_id":-42,"message_id":5,"sender_id":73,"sender_name":"Ayşe","text":"Merhaba","outgoing":0,"chat_kind":"Grup","show_sender_avatar":True,"sender_avatar_icon":fallback})
+    row=w.messages.itemWidget(w.messages.item(0));original_pixmap=row.sender_avatar.pixmap()
+    image=QImage(24,16,QImage.Format_ARGB32);image.fill(QColor("#4477aa"));buffer=QBuffer();buffer.open(QIODevice.WriteOnly);image.save(buffer,"PNG")
+    service=SimpleNamespace(client=SimpleNamespace(is_connected=lambda:True),download_profile_photo=lambda _peer: asyncio.sleep(0,result=bytes(buffer.data())))
+    w.telegram=service;redraws=[];monkeypatch.setattr(w,"_render_messages",lambda peer:redraws.append(peer))
+    await w._ensure_chat_avatar(73)
+    updated=row.sender_avatar.pixmap()
+    assert redraws==[] and w.messages.count()==1
+    assert not updated.isNull() and updated.cacheKey()!=original_pixmap.cacheKey()
+    w.telegram=None;w.close()
+
+@pytest.mark.asyncio
+async def test_preview_load_survives_message_widget_replacement_without_duplicate_requests(tmp_path,monkeypatch):
+    from types import SimpleNamespace
+    from academic_chat_manager import main
+    app=QApplication.instance() or QApplication([])
+    monkeypatch.setattr(main,"Store",lambda:__import__('academic_chat_manager.storage',fromlist=['Store']).Store(tmp_path/"preview-race.sqlite3"))
+    main.PREFS.setValue("onboarding/dismissed",True)
+    w=MainWindow();w.show();request={"peer_id":-17,"message_id":21,"media_json":'{"name":"foto.jpg","size":2048,"mime_type":"image/jpeg"}'}
+    image=QImage(32,24,QImage.Format_ARGB32);image.fill(QColor("#4477aa"));buffer=QBuffer();buffer.open(QIODevice.WriteOnly);image.save(buffer,"PNG");png=bytes(buffer.data())
+    class Service:
+        def __init__(self):self.calls=0;self.client=SimpleNamespace(is_connected=lambda:True)
+        async def download_media_bytes(self,peer_id,message_id):
+            self.calls+=1;await asyncio.sleep(.02);return png
+    service=Service();w.telegram=service
+    def add_preview(target=request):
+        item=main.QListWidgetItem();w.messages.addItem(item)
+        w._set_message_bubble(item,{**target,"text":"","outgoing":0,"chat_kind":"Kişi"})
+        return w.messages.itemWidget(item).findChild(main.QLabel,"imagePreview")
+    first=add_preview();w._queue_image_preview(request);task=w._image_preview_tasks[(request["peer_id"],request["message_id"])]
+    w.messages.clear();app.processEvents();second=add_preview();w._queue_image_preview(request)
+    assert w._image_preview_tasks[(request["peer_id"],request["message_id"])] is task
+    await task;await asyncio.sleep(0)
+    assert service.calls==1 and second.property("mediaLoaded") is True and not second.pixmap().isNull()
+    missing={**request,"message_id":22}
+    async def missing_media(_peer,_message):raise FileNotFoundError("Telegram mesajı bulunamadı")
+    service.download_media_bytes=missing_media;missing_preview=add_preview(missing)
+    await w._load_image_preview(missing)
+    assert missing_preview.text()=="Önizleme yüklenemedi · aşağıdaki düğmeden indirebilirsiniz"
+    w.telegram=None;w.close()
 
 def test_clear_attachments_button_preserves_message_and_source_files(tmp_path,monkeypatch):
     from academic_chat_manager import main

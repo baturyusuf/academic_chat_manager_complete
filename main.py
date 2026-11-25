@@ -542,7 +542,7 @@ class InviteLinksDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__();self.setWindowTitle("Akademik Sohbet Yöneticisi");self.setWindowIcon(QIcon(str(APP_DIR/"assets"/"app.ico")));self.resize(1550,950);self.setMinimumSize(1050,650);self.setStyleSheet(_theme_stylesheet(False,"#A90025"))
-        self.store=Store();self.telegram=None;self.bulk=None;self.bulk_task=None;self._allow_close=False;self.dialogs={};self._avatar_cache={};self._avatar_loading=set();self.selected_peer=None;self.reply_to=None;self.reply_context=None;self.current_collection=None;self.active_collection_ids=[];self.active_recipient_ids=[];self.context_mode="none";self._chat_open_generation=0;self.active_nav="chats";self.active_kind="Tümü";self.pending_chat_files=[];self._pasted_clipboard_files=set();self._uploading_clipboard_files=set();self._bulk_pasted_files=set();self._build();self._load_settings();self.refresh_chats();self.refresh_tree();self.refresh_history();self._update_pending_files()
+        self.store=Store();self.telegram=None;self.bulk=None;self.bulk_task=None;self._allow_close=False;self.dialogs={};self._avatar_cache={};self._avatar_loading=set();self._image_preview_cache={};self._image_preview_tasks={};self._preview_scan_queued=False;self.selected_peer=None;self.reply_to=None;self.reply_context=None;self.current_collection=None;self.active_collection_ids=[];self.active_recipient_ids=[];self.context_mode="none";self._chat_open_generation=0;self.active_nav="chats";self.active_kind="Tümü";self.pending_chat_files=[];self._pasted_clipboard_files=set();self._uploading_clipboard_files=set();self._bulk_pasted_files=set();self._build();self._load_settings();self.refresh_chats();self.refresh_tree();self.refresh_history();self._update_pending_files()
         api_hash=security.get_secret("api_hash");api_id=PREFS.value("telegram/api_id","")
         if api_hash and api_id:QTimer.singleShot(300,lambda:asyncio.create_task(self._reconnect()))
         elif not PREFS.value("onboarding/dismissed",False,type=bool):QTimer.singleShot(600,self._first_run_connect)
@@ -585,7 +585,7 @@ class MainWindow(QMainWindow):
         return f
     def _conversation_panel(self):
         self.conversation=QFrame(objectName="conversation");self.conversation.setMinimumWidth(360);v=QVBoxLayout(self.conversation);v.setContentsMargins(0,0,0,0);v.setSpacing(0);head=QFrame(objectName="chatHeader");h=QHBoxLayout(head);h.setContentsMargins(15,10,15,10);self.chat_avatar=QLabel();self.chat_avatar.setFixedSize(42,42);h.addWidget(self.chat_avatar);hv=QVBoxLayout();self.chat_title=QLabel("Sohbet seçin",objectName="sectionTitle");self.chat_meta=QLabel("Telegram mesajları burada yüklenecek",objectName="muted");hv.addWidget(self.chat_title);hv.addWidget(self.chat_meta);h.addLayout(hv);h.addStretch();self.message_search=QLineEdit();self.message_search.setPlaceholderText("Bu sohbette ara");self.message_search.setMaximumWidth(250);self.message_search.returnPressed.connect(self.search_messages);h.addWidget(self.message_search);v.addWidget(head)
-        self.older_messages_btn=_icon_button("up","Önceki mesajları yükle");self.older_messages_btn.setObjectName("olderMessages");self.older_messages_btn.clicked.connect(self.load_older_messages);v.addWidget(self.older_messages_btn,0,Qt.AlignHCenter);self.messages=MessageListWidget();self.messages.setContextMenuPolicy(Qt.CustomContextMenu);self.messages.customContextMenuRequested.connect(self._message_menu);v.addWidget(self.messages,1)
+        self.older_messages_btn=_icon_button("up","Önceki mesajları yükle");self.older_messages_btn.setObjectName("olderMessages");self.older_messages_btn.clicked.connect(self.load_older_messages);v.addWidget(self.older_messages_btn,0,Qt.AlignHCenter);self.messages=MessageListWidget();self.messages.setContextMenuPolicy(Qt.CustomContextMenu);self.messages.customContextMenuRequested.connect(self._message_menu);self.messages.verticalScrollBar().valueChanged.connect(lambda *_:self._schedule_visible_previews());v.addWidget(self.messages,1)
         compose=QFrame(objectName="compose");compose_v=QVBoxLayout(compose);compose_v.setContentsMargins(12,8,12,8)
         self.reply_preview_frame=QFrame(objectName="replyPreviewFrame");reply_row=QHBoxLayout(self.reply_preview_frame);reply_row.setContentsMargins(10,5,6,5);self.reply_preview=QLabel("");self.reply_preview.setWordWrap(True);reply_row.addWidget(self.reply_preview,1);self.clear_reply_btn=_icon_button("close",tooltip="Yanıtı iptal et");self.clear_reply_btn.clicked.connect(self._clear_reply);reply_row.addWidget(self.clear_reply_btn);self.reply_preview_frame.hide();compose_v.addWidget(self.reply_preview_frame)
         self.pending_files_label=QLabel("");self.pending_files_label.setObjectName("muted");compose_v.addWidget(self.pending_files_label);ch=QHBoxLayout();ch.setSpacing(8);attach=_icon_button("attach",tooltip="Dosya ekle");attach.setMinimumSize(38,38);attach.clicked.connect(self.attach_to_chat);ch.addWidget(attach);self.message_input=FileDropTextEdit();self.message_input.send_on_enter=False;self.message_input.setMinimumHeight(42);self.message_input.setMaximumHeight(90);self.message_input.setPlaceholderText("Mesaj yazın veya dosyaları buraya sürükleyin…");self.message_input.filesDropped.connect(self._add_chat_files);self.message_input.sendRequested.connect(self.send_message);ch.addWidget(self.message_input,1);self.emoji_button=_icon_button("emoji",tooltip="Emoji ekle");self.emoji_button.setMinimumSize(38,38);self.emoji_button.clicked.connect(self._show_emoji_picker);ch.addWidget(self.emoji_button);send=_icon_button("bulk","Gönder");send.setObjectName("primary");send.setMinimumHeight(38);send.clicked.connect(self.send_message);ch.addWidget(send);compose_v.addLayout(ch);self.clear_attachments=_icon_button("close","Ekleri kaldır");self.clear_attachments.setObjectName("clearAttachments");self.clear_attachments.setToolTip("Gönderilecek tüm ekleri kaldır");self.clear_attachments.setAccessibleName("Tüm ekleri kaldır");self.clear_attachments.setAccessibleDescription("Mesaj metnini değiştirmeden bekleyen ekleri kaldırır.");self.clear_attachments.clicked.connect(self._clear_chat_files);self.clear_attachments.setVisible(False);clear_row=QHBoxLayout();clear_row.addStretch();clear_row.addWidget(self.clear_attachments);compose_v.addLayout(clear_row);v.addWidget(compose);return self.conversation
@@ -686,13 +686,19 @@ class MainWindow(QMainWindow):
                     if item.data(Qt.UserRole)==peer_id:
                         item.setIcon(icon or self._avatar_icon((self.store.chat(peer_id) or {}).get("title","Telegram")))
                 if self.selected_peer==peer_id and icon:self.chat_avatar.setPixmap(icon.pixmap(42,42))
-                if self.context_mode=="chat" and self.selected_peer is not None:
-                    current_kind=(self.store.chat(self.selected_peer) or {}).get("kind")
-                    if (current_kind in ("Kişi","Bot") and int(self.selected_peer)==peer_id) or current_kind in ("Grup","Kanal"):
-                        self._render_messages(int(self.selected_peer))
+                if icon:self._update_message_avatar_for_peer(peer_id,icon)
         except Exception:
             if self.telegram is service:self._avatar_cache[peer_id]=None
         finally:self._avatar_loading.discard(peer_id)
+    def _update_message_avatar_for_peer(self,peer_id,icon):
+        if self.context_mode!="chat":return
+        for index in range(self.messages.count()):
+            item=self.messages.item(index);data=item.data(Qt.UserRole) or {};kind=data.get("chat_kind")
+            avatar_peer=data.get("sender_id") if kind in ("Grup","Kanal") else self.selected_peer if kind in ("Kişi","Bot") else None
+            if avatar_peer is None or int(avatar_peer)!=int(peer_id):continue
+            data["sender_avatar_icon"]=icon;item.setData(Qt.UserRole,data)
+            row=self.messages.itemWidget(item);avatar=getattr(row,"sender_avatar",None) if row else None
+            if avatar and data.get("show_sender_avatar",True):avatar.setPixmap(icon.pixmap(30,30))
     def refresh_tree(self):
         if not hasattr(self,"tree"):return
         selected=[]
@@ -1063,14 +1069,77 @@ class MainWindow(QMainWindow):
             request=preview.property("mediaRequest")
             if request:
                 preview.clicked.connect(lambda target=preview,media=request:self._show_fullscreen_preview(target,media))
-                try:asyncio.get_running_loop().create_task(self._load_image_preview(preview,request))
-                except RuntimeError:pass
+                self._schedule_visible_previews()
         if row.is_group and not row.outgoing and item.data(Qt.UserRole).get("sender_id"):
             sender_id=int(item.data(Qt.UserRole)["sender_id"])
             if sender_id not in self._avatar_cache and self.telegram:
                 try:asyncio.get_running_loop().create_task(self._ensure_chat_avatar(sender_id))
                 except RuntimeError:pass
         item.setSizeHint(QSize(max(1,self.messages.viewport().width()),row.sizeHint().height()+8))
+
+    def _preview_key(self,request):
+        return int(request["peer_id"]),int(request["message_id"])
+
+    def _schedule_visible_previews(self):
+        if self._preview_scan_queued:return
+        self._preview_scan_queued=True;QTimer.singleShot(0,self._queue_visible_previews)
+
+    def _queue_visible_previews(self):
+        self._preview_scan_queued=False
+        if not hasattr(self,"messages"):return
+        viewport=self.messages.viewport();visible=viewport.rect()
+        for preview in self.messages.findChildren(QLabel,"imagePreview"):
+            if not preview.isVisible():continue
+            position=preview.mapTo(viewport,QPoint(0,0))
+            if not visible.intersects(QRect(position,preview.size())):continue
+            request=preview.property("mediaRequest")
+            if request:self._queue_image_preview(request)
+
+    def _queue_image_preview(self,request):
+        key=self._preview_key(request)
+        if key in self._image_preview_cache:
+            self._set_image_preview_labels(key,self._image_preview_cache[key]);return
+        current=self._image_preview_tasks.get(key)
+        if current and not current.done():return
+        try:loop=asyncio.get_running_loop()
+        except RuntimeError:return
+        task=loop.create_task(self._load_image_preview(request));self._image_preview_tasks[key]=task
+        task.add_done_callback(lambda finished,k=key:self._image_preview_tasks.pop(k,None) if self._image_preview_tasks.get(k) is finished else None)
+
+    def _cancel_image_preview_tasks(self):
+        for task in tuple(self._image_preview_tasks.values()):
+            if not task.done():task.cancel()
+        self._image_preview_tasks.clear()
+
+    def _set_image_preview_labels(self,key,result):
+        if not hasattr(self,"messages"):return
+        for preview in self.messages.findChildren(QLabel,"imagePreview"):
+            request=preview.property("mediaRequest")
+            if not request or self._preview_key(request)!=key:continue
+            if isinstance(result,QPixmap):
+                preview.setPixmap(result);preview.setText("");preview.setProperty("mediaLoaded",True)
+                preview.setToolTip("Görsel önizlemesi · dosyayı kaydetmek için ekin indirme düğmesini kullanın")
+            else:preview.setText(str(result))
+
+    async def _load_image_preview(self,request):
+        key=self._preview_key(request);service=self.telegram
+        if not service or not service.client or not service.client.is_connected():
+            result="Telegram'a bağlanınca görsel önizlemesi yüklenir"
+        else:
+            try:
+                data=await service.download_media_bytes(*key)
+                if self.telegram is not service:return
+                if not data:result="Önizleme kullanılamıyor · aşağıdaki düğmeden indirebilirsiniz"
+                else:
+                    image=QPixmap()
+                    if not image.loadFromData(data):result="Görsel önizlemesi açılamadı"
+                    else:result=image.scaled(400,260,Qt.KeepAspectRatio,Qt.SmoothTransformation)
+            except asyncio.CancelledError:raise
+            except Exception:result="Önizleme yüklenemedi · aşağıdaki düğmeden indirebilirsiniz"
+        if self.telegram is not service:return
+        self._image_preview_cache[key]=result
+        while len(self._image_preview_cache)>64:self._image_preview_cache.pop(next(iter(self._image_preview_cache)))
+        self._set_image_preview_labels(key,result)
 
     def _show_fullscreen_preview(self,preview,request):
         pixmap=preview.pixmap()
@@ -1080,18 +1149,6 @@ class MainWindow(QMainWindow):
         dialog.downloadRequested.connect(lambda target:asyncio.create_task(self._download_message(target)))
         dialog.setWindowState(dialog.windowState()|Qt.WindowFullScreen);dialog.exec()
 
-    async def _load_image_preview(self,label,request):
-        if not self.telegram or not self.telegram.client or not self.telegram.client.is_connected():
-            label.setText("Telegram'a bağlanınca görsel önizlemesi yüklenir");return
-        try:
-            data=await self.telegram.download_media_bytes(request["peer_id"],request["message_id"])
-            if not data:label.setText("Önizleme kullanılamıyor · aşağıdaki düğmeden indirebilirsiniz");return
-            image=QPixmap()
-            if not image.loadFromData(data):label.setText("Görsel önizlemesi açılamadı");return
-            label.setPixmap(image.scaled(400,260,Qt.KeepAspectRatio,Qt.SmoothTransformation));label.setText("");label.setProperty("mediaLoaded",True)
-            label.setToolTip("Görsel önizlemesi · dosyayı kaydetmek için ekin indirme düğmesini kullanın")
-        except Exception:
-            label.setText("Önizleme yüklenemedi · aşağıdaki düğmeden indirebilirsiniz")
     def _set_reply(self,message):
         self.reply_to=message.get("message_id");self.reply_context={"sender":message.get("sender_name") or "Mesaj","text":message.get("text") or "[Medya veya dosya]"}
         preview=self.reply_context["text"].replace("\n"," ").strip()
@@ -1437,15 +1494,18 @@ class MainWindow(QMainWindow):
                 await self.telegram.disconnect();self.telegram=None;self.connection_label.setText("●  Yeniden giriş gerekli")
         except Exception as e:self.connection_label.setText("●  Bağlantı kurulamadı");self.statusBar().showMessage(f"Telegram bağlantı hatası: {e}",10000)
     def _connected(self,user):
+        self._cancel_image_preview_tasks();self._image_preview_cache.clear()
         user_id=getattr(user,'id',None);old_id=self.store.preference('telegram/user_id')
         if old_id is not None and user_id is not None and int(old_id)!=int(user_id):
             answer=QMessageBox.question(self,"Farklı Telegram hesabı", "Başka bir Telegram hesabına geçiyorsunuz. Önceki hesaba ait sohbet önbelleği temizlenecek; koleksiyon klasörleri korunacak fakat sohbet üyelikleri silinecek. Devam edilsin mi?",QMessageBox.Yes|QMessageBox.No)
             if answer!=QMessageBox.Yes:return False
             self.store.clear_telegram_data()
             self._avatar_cache.clear()
+            self._image_preview_cache.clear()
         if user_id is not None:self.store.set_preference('telegram/user_id',int(user_id))
         name=" ".join(filter(None,[getattr(user,'first_name',None),getattr(user,'last_name',None)])) or getattr(user,'username',None) or "Telegram hesabı";self.account_label.setText(name);self.connection_label.setText("●  Telegram bağlı");self.connection_label.setStyleSheet("color:#18833b;font-weight:600");self.account_status.setText(f"Bağlı hesap: {name}");self.statusBar().showMessage("Telegram hesabı bağlandı")
         if self.telegram:self.telegram.start_updates(self._on_live_message,self._on_message_edited,self._on_message_read)
+        self._schedule_visible_previews()
         return True
     async def _discard_new_account_session(self):
         if self.telegram:
@@ -1581,15 +1641,16 @@ class MainWindow(QMainWindow):
             self.messages.setStyleSheet(f"QListWidget#messages{{background-color:{color};background-image:url(\"{image_url}\");background-position:center;background-repeat:no-repeat}}")
         else:self.messages.setStyleSheet(f"QListWidget#messages{{background:{color}}}")
     def closeEvent(self,event):
-        if self._allow_close:return super().closeEvent(event)
+        if self._allow_close:self._cancel_image_preview_tasks();return super().closeEvent(event)
         if self.bulk and self.bulk.current_job:
             answer=QMessageBox.question(self,"Gönderim sürüyor","Uygulamayı kapatıp bekleyen alıcıları iptal etmek istiyor musunuz? Gönderilmiş mesajlar geri alınamaz.",QMessageBox.Yes|QMessageBox.No)
             if answer!=QMessageBox.Yes:event.ignore();return
             self.bulk.cancel()
         if self.telegram:
             event.ignore();asyncio.create_task(self._shutdown());return
-        self.store.set_preference('appearance/credit',self.credit_check.isChecked());super().closeEvent(event)
+        self._cancel_image_preview_tasks();self.store.set_preference('appearance/credit',self.credit_check.isChecked());super().closeEvent(event)
     async def _shutdown(self):
+        self._cancel_image_preview_tasks()
         if self.bulk_task and not self.bulk_task.done():
             try:await self.bulk_task
             except Exception:pass
