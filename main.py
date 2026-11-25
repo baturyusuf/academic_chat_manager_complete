@@ -1579,10 +1579,11 @@ class MainWindow(QMainWindow):
         self._suppressed_notifications=0;self._last_notification_at=now
         self.tray.showMessage(title,text[:180],QSystemTrayIcon.MessageIcon.Information,5000)
     def _notification_window_is_foreground(self):
-        if not self.isVisible() or self.isMinimized():return False
-        if QApplication.applicationState()==Qt.ApplicationActive:return True
-        active=QApplication.activeWindow()
-        return self.isActiveWindow() or bool(active and (active is self or self.isAncestorOf(active)))
+        # Qt/Windows can briefly report an on-screen window as inactive while
+        # focus moves between child widgets. A native tray toast is queued by
+        # Windows and cannot be withdrawn afterward, so visibility is the safe
+        # boundary: only notify when the main window is hidden or minimized.
+        return self.isVisible() and not self.isMinimized()
     async def sync_chats(self):
         try:
             rows=await self.telegram.load_dialogs();self.store.upsert_chats(rows,complete_sync=True);self.dialogs={r['peer_id']:r for r in rows};self.refresh_chats();self.refresh_tree();self.statusBar().showMessage(f"{len(rows)} sohbet eşitlendi",6000)

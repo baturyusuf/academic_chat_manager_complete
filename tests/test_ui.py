@@ -175,10 +175,15 @@ def test_notifications_are_suppressed_for_visible_app_and_open_chat(tmp_path,mon
     class Tray:
         def showMessage(self,*args):calls.append(args)
     w.tray=Tray()
-    monkeypatch.setattr(w,"_notification_window_is_foreground",lambda:True)
+    # The app can be visible even when Windows/Qt briefly loses the active flag
+    # while the user moves between widgets. Visible must still suppress toasts.
+    monkeypatch.setattr(w,"isVisible",lambda:True)
+    monkeypatch.setattr(w,"isMinimized",lambda:False)
+    assert w._notification_window_is_foreground()
     w._show_local_notification({"peer_id":peer,"text":"Yeni ileti","outgoing":0})
     assert calls==[]
-    monkeypatch.setattr(w,"_notification_window_is_foreground",lambda:False)
+    monkeypatch.setattr(w,"isVisible",lambda:False)
+    assert not w._notification_window_is_foreground()
     w.context_mode="chat";w.selected_peer=peer
     w._show_local_notification({"peer_id":peer,"text":"Açık sohbetteki ileti","outgoing":0})
     w._show_local_notification({"peer_id":peer,"text":"Kendi gönderdiğim ileti","outgoing":1})
