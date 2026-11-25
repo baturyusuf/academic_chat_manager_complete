@@ -2,6 +2,10 @@
 from __future__ import annotations
 import asyncio, uuid
 from telethon import errors
+try:
+    from .media import bulk_sent_attachments
+except ImportError:
+    from media import bulk_sent_attachments
 
 class BulkSender:
     def __init__(self,store,telegram):self.store=store;self.telegram=telegram;self.cancel_event=asyncio.Event();self.current_job=None
@@ -29,7 +33,7 @@ class BulkSender:
                 sent=[]
                 if files:sent.extend(await self.telegram.send_files(peer_id,files,caption=message.strip()))
                 elif message.strip():sent.append(await self.telegram.send_text(peer_id,message))
-                self.store.update_target(job_id,peer_id,"sent",message_id=getattr(sent[-1],"id",None))
+                self.store.update_target(job_id,peer_id,"sent",message_id=getattr(sent[-1],"id",None),attachments=bulk_sent_attachments(files,sent) if files else None)
             except errors.FloodWaitError as e:
                 # Do not bypass Telegram limits. Keep this item queued for explicit later retry.
                 self.store.update_target(job_id,peer_id,"flood_wait",f"Telegram {e.seconds} saniye bekleme istedi")
