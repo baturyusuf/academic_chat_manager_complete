@@ -6,7 +6,7 @@ import certifi
 if os.name=="nt" or not os.environ.get("SSL_CERT_FILE") or not Path(os.environ["SSL_CERT_FILE"]).is_file():
     os.environ["SSL_CERT_FILE"]=certifi.where()
 from datetime import datetime, timezone
-from PySide6.QtCore import Qt, QSettings, QSize, QRect, Signal, QMimeData, QTimer, QItemSelectionModel, QByteArray
+from PySide6.QtCore import Qt, QSettings, QSize, QRect, Signal, QMimeData, QTimer, QItemSelectionModel, QByteArray, QEvent, QPoint
 from PySide6.QtGui import QAction, QFont, QPixmap, QColor, QDrag, QIcon, QPalette, QKeySequence, QShortcut, QPainter
 from PySide6.QtWidgets import *
 from PySide6.QtSvg import QSvgRenderer
@@ -48,6 +48,10 @@ _ICON_PATHS = {
     "refresh": "M20 10A8 8 0 1 0 19 17M20 3V10H13",
     "image": "M3 4H21V20H3ZM3 16L9 10L15 16L18 13L21 16M16 8H16.1",
     "copy": "M8 8H21V21H8ZM16 8V3H3V16H8",
+    "reply": "M10 5L3 12L10 19M3 12H15Q21 12 21 19",
+    "download": "M12 3V15M6 9L12 15L18 9M4 16V21H20V16",
+    "edit": "M4 20L5 14L16 3L21 8L10 19ZM14 5L19 10",
+    "trash": "M3 6H21M9 6V3H15V6M6 6L7 21H17L18 6M10 10V17M14 10V17",
     "check": "M4 12L10 18L20 6",
     "eye": "M2 12Q12 -1 22 12Q12 25 2 12ZM12 9A3 3 0 1 1 9 12A3 3 0 0 1 12 9",
     "eye-off": "M3 3L21 21M2 12Q5 7 8 6M11 5Q17 4 22 12Q20 15 17 17M13 19Q7 20 2 12",
@@ -164,6 +168,9 @@ def _theme_stylesheet(dark: bool, accent: str) -> str:
     QMenu{{background:{c['surface']};color:{c['text']};border:1px solid {c['border']};padding:4px}}
     QMenu::item{{padding:7px 22px;border-radius:5px}}
     QMenu::item:selected{{background:{c['selection']};color:{c['selected_text']}}}
+    QMenu#messageContextMenu{{padding:6px;border-radius:9px}}
+    QMenu#messageContextMenu::item{{padding:9px 26px 9px 34px;border-radius:6px}}
+    QMenu#messageContextMenu::separator{{height:1px;background:{c['border']};margin:5px 8px}}
     QFrame#incomingBubble{{background:{c['surface']};border:1px solid {c['border']};border-radius:13px}}
     QFrame#outgoingBubble{{background:{_mix_color(accent, c['surface'], .13 if not dark else .32)};border:1px solid {_mix_color(accent, c['border'], .25)};border-radius:13px}}
     QLabel#messageSender{{font-weight:650;color:{highlight}}}
@@ -236,6 +243,8 @@ class FileDropTextEdit(QPlainTextEdit):
         else:super().dropEvent(event)
 
 class MessageBubbleRow(QWidget):
+    contextMenuRequested = Signal(QPoint)
+
     def __init__(self, message):
         super().__init__()
         self.message = message
@@ -267,6 +276,21 @@ class MessageBubbleRow(QWidget):
             if self.reactions_label.text():content.addWidget(self.reactions_label)
         if self.outgoing: row.addStretch(1); row.addWidget(self.bubble)
         else: row.addWidget(self.bubble); row.addStretch(1)
+        # Selectable QLabels otherwise consume right-clicks with a native text menu.
+        # Intercept the context event only; normal text selection remains available.
+        for widget in [self, *self.findChildren(QWidget)]:
+            widget.installEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.ContextMenu:
+            pos = event.globalPos()
+            if event.reason() == event.Reason.Keyboard:
+                pos = watched.mapToGlobal(watched.rect().center())
+            event.accept()
+            self.contextMenuRequested.emit(pos)
+            return True
+        return super().eventFilter(watched, event)
+
     def set_bubble_limit(self, width):
         max_content=max(180,width-26);metrics=self.body.fontMetrics()
         longest=max((metrics.horizontalAdvance(line) for line in self.body.text().splitlines()),default=0)
@@ -819,7 +843,7 @@ class MainWindow(QMainWindow):
             self._append_message_bubble(m)
         self.messages.scrollToBottom()
     def _append_message_bubble(self,message):
-        item=QListWidgetItem();item.setData(Qt.UserRole,message);row=MessageBubbleRow(message);row.set_bubble_limit(max(240,int(self.messages.viewport().width()*.76)));self.messages.addItem(item);self.messages.setItemWidget(item,row);item.setSizeHint(QSize(max(1,self.messages.viewport().width()),row.sizeHint().height()+28))
+        item=QListWidgetItem();item.setData(Qt.UserRole,message);row=MessageBubbleRow(message);row.set_bubble_limit(max(240,int(self.messages.viewport().width()*.76)));self.messages.addItem(item);self.messages.setItemWidget(item,row);row.contextMenuRequested.connect(lambda global_pos,target=item:self._message_menu(self.messages.viewport().mapFromGlobal(global_pos),item=target));item.setSizeHint(QSize(max(1,self.messages.viewport().width()),row.sizeHint().height()+28))
     def _set_reply(self,message):
         self.reply_to=message.get("message_id");self.reply_context={"sender":message.get("sender_name") or "Mesaj","text":message.get("text") or "[Medya veya dosya]"}
         preview=self.reply_context["text"].replace("\n"," ").strip()
@@ -884,8 +908,8 @@ class MainWindow(QMainWindow):
             self._pasted_clipboard_files.discard(path)
     def _upload_progress(self,current,total):
         self.statusBar().showMessage(f"Dosya yükleniyor: {int(100*current/max(total,1))}%")
-    def _message_menu(self,pos):
-        item=self.messages.itemAt(pos)
+    def _message_menu(self,pos,item=None):
+        if item is None:item=self.messages.itemAt(pos)
         if not item or not item.data(Qt.UserRole):return
         m=item.data(Qt.UserRole)
         if isinstance(m,dict) and m.get("kind")=="collection_job":
@@ -893,19 +917,40 @@ class MainWindow(QMainWindow):
             lines=[f"{r['peer_title']} · {r['status']}"+(f" · {r['error']}" if r['error'] else "") for r in details]
             QMessageBox.information(self,"Klasör gönderim durumu","\n".join(lines) or "Alıcı kaydı bulunamadı.");return
         if isinstance(m,dict) and m.get("kind")=="collection_member":
-            menu=QMenu(self.messages);remove=menu.addAction("Bu klasörden çıkar");chosen=menu.exec(self.messages.mapToGlobal(pos))
+            menu=QMenu(self.messages);remove=menu.addAction("Bu klasörden çıkar");chosen=menu.exec(self.messages.viewport().mapToGlobal(pos))
             if chosen==remove and self.current_collection:self.store.remove_chat_from_collection(self.current_collection,m['peer_id']);self._collection_selected(self.tree.currentItem());self.refresh_tree()
             return
-        menu=QMenu(self.messages);reply=menu.addAction("Yanıtla");copy=menu.addAction("Metni kopyala")
-        reaction_menu=menu.addMenu("Tepki bırak")
+        menu=QMenu(self.messages)
+        menu.setObjectName("messageContextMenu")
+        theme=self.theme.currentText()
+        dark=theme=="Koyu" or (theme=="Sistem ayarı" and QApplication.palette().color(QPalette.Window).lightness()<128)
+        color="#e8edf5" if dark else "#202938"
+        muted="#a1adbd" if dark else "#687589"
+        size=_icon_size(self.font_size.value())
+        def icon(name, destructive=False):
+            stroke=("#ff9aa5" if dark else "#a61d35") if destructive else color
+            return _line_icon(name,stroke,size,muted,stroke)
+        row=self.messages.itemWidget(item)
+        selected_text=row.body.selectedText() if isinstance(row,MessageBubbleRow) else ""
+        reply=menu.addAction(icon("reply"),"Yanıtla")
+        copy=menu.addAction(icon("copy"),"Metni kopyala")
+        copy_selection=menu.addAction(icon("copy"),"Seçili metni kopyala") if selected_text else None
+        reaction_menu=menu.addMenu(icon("emoji"),"Tepki bırak")
         for emoji in ["👍","❤️","😂","😮","😢","🙏","🔥","🎉"]:
             reaction_action=reaction_menu.addAction(emoji);reaction_action.triggered.connect(lambda checked=False,value=emoji,target=m:asyncio.create_task(self._react_to_message(target,value)))
-        download=menu.addAction("Dosyayı indir…") if m.get('media_json') else None;edit=menu.addAction("Mesajı düzenle") if m['outgoing'] else None;delete=menu.addAction("Mesajı sil") if m['outgoing'] else None;chosen=menu.exec(self.messages.mapToGlobal(pos))
+        download=menu.addAction(icon("download"),"Dosyayı indir…") if m.get("media_json") else None
+        edit=delete=None
+        if m.get("outgoing"):
+            menu.addSeparator()
+            edit=menu.addAction(icon("edit"),"Mesajı düzenle")
+            delete=menu.addAction(icon("trash",True),"Mesajı sil")
+        chosen=menu.exec(self.messages.viewport().mapToGlobal(pos))
         # A dismissed menu returns None. Never let None compare equal to an
         # unavailable action (also None), which previously opened a fake download.
         if chosen is None:return
         if chosen==reply:self._set_reply(m)
         elif chosen==copy:QApplication.clipboard().setText(m.get('text') or "")
+        elif copy_selection is not None and chosen==copy_selection:QApplication.clipboard().setText(selected_text)
         elif download is not None and chosen==download:asyncio.create_task(self._download_message(m))
         elif edit is not None and chosen==edit:
             text,ok=QInputDialog.getMultiLineText(self,"Mesajı düzenle","Metin:",m['text'])
