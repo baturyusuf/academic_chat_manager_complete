@@ -274,3 +274,40 @@ def test_clear_attachments_button_preserves_message_and_source_files(tmp_path,mo
         assert source.is_file()
     finally:
         w.close()
+
+def test_application_icons_scale_and_follow_theme(tmp_path,monkeypatch):
+    from academic_chat_manager import main
+    app=QApplication.instance() or QApplication([])
+    monkeypatch.setattr(main,"Store",lambda:__import__('academic_chat_manager.storage',fromlist=['Store']).Store(tmp_path/"icons.sqlite3"))
+    main.PREFS.setValue("onboarding/dismissed",True)
+    w=MainWindow()
+    try:
+        w.theme.setCurrentText("Açık")
+        w.font_size.setValue(10)
+        button=w.nav["chats"]
+        assert button.text()=="Sohbetler" and not button.icon().isNull()
+        assert not w.emoji_button.icon().isNull() and w.emoji_button.accessibleName()=="Emoji ekle"
+        assert not w.tabs.tabIcon(0).isNull()
+        assert not w.clear_attachments.icon().isNull()
+        small=button.iconSize().width()
+        w.font_size.setValue(20)
+        assert button.iconSize().width()>small
+        assert w.emoji_button.iconSize()==button.iconSize()==w.tabs.iconSize()
+        # Use an inactive icon: the active accent foreground is shared by both themes.
+        light=w.nav["settings"].icon().cacheKey()
+        w.theme.setCurrentText("Koyu")
+        assert w.nav["settings"].icon().cacheKey()!=light
+        assert w.font_size.value()==20
+        active=w.nav["settings"].icon().cacheKey()
+        w.navigate("settings")
+        assert w.nav["settings"].property("active")
+        assert w.nav["settings"].icon().cacheKey()!=active
+        w.font_size.setValue(13)
+        default=w.store.create_collection("Standart")
+        custom=w.store.create_collection("Özel",icon="⭐")
+        w.refresh_tree()
+        assert not w._tree_items[default].icon(0).isNull()
+        assert w._tree_items[custom].text(0).startswith("⭐")
+    finally:
+        w.font_size.setValue(13)
+        w.close()
