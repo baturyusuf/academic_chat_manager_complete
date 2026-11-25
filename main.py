@@ -13,13 +13,13 @@ from PySide6.QtSvg import QSvgRenderer
 from qasync import QEventLoop, asyncSlot
 try:  # package import for tests; direct imports for the frozen desktop entry point
     from .storage import Store, app_data_dir
-    from .telegram_service import TelegramService, reaction_rows, emoji_key
+    from .telegram_service import TelegramService, reaction_rows, emoji_key, edit_metadata, edited_message_row
     from .messaging import BulkSender
     from .media import media_metadata, decode_media, format_size, safe_filename, bulk_attachment_cards
     from . import security
 except ImportError:
     from storage import Store, app_data_dir
-    from telegram_service import TelegramService, reaction_rows, emoji_key
+    from telegram_service import TelegramService, reaction_rows, emoji_key, edit_metadata, edited_message_row
     from messaging import BulkSender
     from media import media_metadata, decode_media, format_size, safe_filename, bulk_attachment_cards
     import security
@@ -270,7 +270,10 @@ class MessageBubbleRow(QWidget):
         body_text = message.get("text") or ("" if attachments else "[Medya veya dosya]")
         body = QLabel(body_text, objectName="messageText"); body.setWordWrap(True); body.setTextInteractionFlags(Qt.TextSelectableByMouse)
         stamp=_format_local_datetime(message.get("date"),"%H:%M")
-        footer = QLabel(stamp, objectName="messageTime"); footer.setAlignment(Qt.AlignRight)
+        edited=message.get("edit_date") and not message.get("edit_hidden")
+        footer = QLabel(("düzenlendi · " if edited else "")+stamp, objectName="messageTime"); footer.setAlignment(Qt.AlignRight)
+        if edited:
+            footer.setToolTip("Düzenlenme zamanı: "+_format_local_datetime(message["edit_date"],"%d.%m.%Y %H:%M:%S"))
         self.body = body; self.sender = sender; self.footer = footer
         content.addWidget(sender)
         try:reply=json.loads(message.get("reply_json") or "null")
@@ -867,7 +870,7 @@ class MainWindow(QMainWindow):
                 if target:
                     row["reply_json"]=json.dumps({"sender":target.get("sender_name") or target.get("sender") or "Mesaj","text":target.get("text") or "[Medya veya dosya]"},ensure_ascii=False)
                 else:row["reply_json"]=json.dumps({"sender":"Yanıtlanan mesaj","text":f"Mesaj #{reply_id}"},ensure_ascii=False)
-            self.store.cache_messages([{k:r.get(k) for k in ['peer_id','message_id','sender_id','sender_name','text','date','outgoing','media_json','reactions_json','reply_json']} for r in rows])
+            self.store.cache_messages([{k:r.get(k) for k in ['peer_id','message_id','sender_id','sender_name','text','date','outgoing','media_json','reactions_json','reply_json','edit_date','edit_hidden']} for r in rows])
             if generation==self._chat_open_generation and self.context_mode=="chat" and self.selected_peer==peer_id:self._render_messages(peer_id)
         except Exception as e:
             if generation==self._chat_open_generation and self.selected_peer==peer_id:self.statusBar().showMessage(f"Mesaj geçmişi yüklenemedi: {e}",10000)
@@ -882,7 +885,18 @@ class MainWindow(QMainWindow):
             self._append_message_bubble(m)
         self.messages.scrollToBottom()
     def _append_message_bubble(self,message):
-        item=QListWidgetItem();item.setData(Qt.UserRole,message);row=MessageBubbleRow(message);row.set_bubble_limit(max(240,int(self.messages.viewport().width()*.76)));self.messages.addItem(item);self.messages.setItemWidget(item,row);row.contextMenuRequested.connect(lambda global_pos,target=item:self._message_menu(self.messages.viewport().mapFromGlobal(global_pos),item=target));row.downloadRequested.connect(lambda target:asyncio.create_task(self._download_message(target)));item.setSizeHint(QSize(max(1,self.messages.viewport().width()),row.sizeHint().height()+28))
+        item=QListWidgetItem()
+        self.messages.addItem(item)
+        self._set_message_bubble(item,message)
+
+    def _set_message_bubble(self,item,message):
+        item.setData(Qt.UserRole,message)
+        row=MessageBubbleRow(message)
+        row.set_bubble_limit(max(240,int(self.messages.viewport().width()*.76)))
+        self.messages.setItemWidget(item,row)
+        row.contextMenuRequested.connect(lambda global_pos,target=item:self._message_menu(self.messages.viewport().mapFromGlobal(global_pos),item=target))
+        row.downloadRequested.connect(lambda target:asyncio.create_task(self._download_message(target)))
+        item.setSizeHint(QSize(max(1,self.messages.viewport().width()),row.sizeHint().height()+28))
     def _set_reply(self,message):
         self.reply_to=message.get("message_id");self.reply_context={"sender":message.get("sender_name") or "Mesaj","text":message.get("text") or "[Medya veya dosya]"}
         preview=self.reply_context["text"].replace("\n"," ").strip()
@@ -1047,8 +1061,23 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("İndirme başarısız",6000)
             QMessageBox.warning(self,"İndirme başarısız",str(e))
     async def _edit_message(self,m,text):
-        try:await self.telegram.edit_message(m['peer_id'],m['message_id'],text);await self.load_history(m['peer_id'])
-        except Exception as e:QMessageBox.warning(self,"Düzenleme başarısız",str(e))
+        service=self.telegram
+        if not service:
+            QMessageBox.information(self,"Telegram bağlı değil","Mesajı düzenlemek için Telegram hesabını bağlayın.");return
+        try:updated=await service.edit_message(m["peer_id"],m["message_id"],text)
+        except Exception as e:
+            QMessageBox.warning(self,"Düzenleme başarısız",str(e));return
+        if self.telegram is not service:return
+        if getattr(updated,"edit_date",None):
+            self._on_message_edited(edited_message_row(updated,m["peer_id"]))
+        else:
+            # Do not invent an edit timestamp; the server supplies it.
+            try:
+                updated=await service.client.get_messages(service._entity(m["peer_id"]),ids=m["message_id"])
+                if self.telegram is service and getattr(updated,"edit_date",None):
+                    self._on_message_edited(edited_message_row(updated,m["peer_id"]))
+            except Exception:
+                self.statusBar().showMessage("Mesaj düzenlendi; görünüm henüz güncellenemedi.",5000)
     async def _delete_message(self,m):
         try:await self.telegram.delete_message(m['peer_id'],m['message_id']);await self.load_history(m['peer_id'])
         except Exception as e:QMessageBox.warning(self,"Silme başarısız",str(e))
@@ -1064,7 +1093,7 @@ class MainWindow(QMainWindow):
             for m in reversed(rows):
                 metadata=media_metadata(m)
                 reactions=reaction_rows(m)
-                self._append_message_bubble({"peer_id":self.selected_peer,"message_id":m.id,"sender_id":getattr(m,"sender_id",None),"sender_name":"Siz" if m.out else str(getattr(m,"sender_id",None) or "Telegram"),"text":m.message or "","date":m.date.isoformat() if m.date else "","outgoing":int(bool(m.out)),"media_json":json.dumps(metadata,ensure_ascii=False) if metadata else None,"reactions_json":json.dumps(reactions,ensure_ascii=False)})
+                self._append_message_bubble({"peer_id":self.selected_peer,"message_id":m.id,"sender_id":getattr(m,"sender_id",None),"sender_name":"Siz" if m.out else str(getattr(m,"sender_id",None) or "Telegram"),"text":m.message or "","date":m.date.isoformat() if m.date else "","outgoing":int(bool(m.out)),"media_json":json.dumps(metadata,ensure_ascii=False) if metadata else None,"reactions_json":json.dumps(reactions,ensure_ascii=False),**edit_metadata(m)})
         except Exception as e:QMessageBox.warning(self,"Arama başarısız",str(e))
     def start_bulk(self,cid=None):
         cid=cid if cid is not None else self.bulk_collection_combo.currentData()
@@ -1214,7 +1243,7 @@ class MainWindow(QMainWindow):
             self.store.clear_telegram_data()
         if user_id is not None:self.store.set_preference('telegram/user_id',int(user_id))
         name=" ".join(filter(None,[getattr(user,'first_name',None),getattr(user,'last_name',None)])) or getattr(user,'username',None) or "Telegram hesabı";self.account_label.setText(name);self.connection_label.setText("●  Telegram bağlı");self.connection_label.setStyleSheet("color:#18833b;font-weight:600");self.account_status.setText(f"Bağlı hesap: {name}");self.statusBar().showMessage("Telegram hesabı bağlandı")
-        if self.telegram:self.telegram.start_updates(self._on_live_message)
+        if self.telegram:self.telegram.start_updates(self._on_live_message,self._on_message_edited)
         return True
     async def _discard_new_account_session(self):
         if self.telegram:
@@ -1222,13 +1251,28 @@ class MainWindow(QMainWindow):
             except Exception:await self.telegram.disconnect()
         self.telegram=None;self.connection_label.setText("●  Bağlantı yok");self.account_status.setText("Bağlı değil")
     def _on_live_message(self,row):
-        self.store.cache_messages([{k:row.get(k) for k in ['peer_id','message_id','sender_id','sender_name','text','date','outgoing','media_json','reactions_json']}])
+        self.store.cache_messages([{k:row.get(k) for k in ['peer_id','message_id','sender_id','sender_name','text','date','outgoing','media_json','reactions_json','edit_date','edit_hidden']}])
         if not self.store.chat(row['peer_id']):
             self.store.upsert_chats([{"peer_id":row['peer_id'],"access_hash":None,"title":row.get('chat_title') or "Telegram sohbet","kind":"Grup" if row['peer_id']<0 else "Kişi","username":None,"can_send":1,"unread_count":0,"last_message":row['text'] or "Medya","last_message_at":row['date']}])
         else:self.store.update_last_message(row['peer_id'],row['text'] or "Medya",row['date'],incoming=not row['outgoing'])
         self.refresh_chats()
         if self.selected_peer==row['peer_id']:self._render_messages(row['peer_id'])
         if not row['outgoing']:self._show_local_notification(row)
+    def _on_message_edited(self,row):
+        """Edits are not new messages: no unread increment or arrival notification."""
+        if not row.get("edit_date"):return
+        self.store.update_message_edit(row)
+        if self.selected_peer!=row["peer_id"] or self.context_mode!="chat":return
+        for index in range(self.messages.count()):
+            item=self.messages.item(index);data=item.data(Qt.UserRole) or {}
+            if data.get("kind") or (data.get("peer_id"),data.get("message_id"))!=(row["peer_id"],row["message_id"]):continue
+            previous=_local_datetime(data.get("edit_date"))
+            incoming=_local_datetime(row["edit_date"])
+            if previous and (not incoming or previous>incoming):continue
+            updated={**data,**{key:row[key] for key in ("text","media_json","edit_date","edit_hidden")}}
+            self._set_message_bubble(item,updated)
+            break
+
     def _show_local_notification(self,row):
         mode=self.notification_mode.currentText() if hasattr(self,"notification_mode") else self.store.preference('notifications/mode','Tüm bildirimler')
         if mode=="Sessiz mod" or (mode=="Yalnızca koleksiyonlar" and not self.store.is_in_any_collection(row['peer_id'])):return
