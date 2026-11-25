@@ -68,7 +68,12 @@ def bulk_sent_attachments(paths, messages):
     result = []
     for index, (path, message) in enumerate(zip(paths, messages)):
         metadata = media_metadata(message) or local_metadata(path)
-        result.append({**metadata, "name": safe_filename(path), "index": index, "message_id": message.id})
+        name = safe_filename(path)
+        # Telegram may convert a photo to JPEG during upload; keep the actual format.
+        remote_suffix = Path(metadata["name"]).suffix
+        if remote_suffix and remote_suffix.lower() != Path(name).suffix.lower():
+            name = safe_filename(Path(name).stem + remote_suffix)
+        result.append({**metadata, "name": name, "index": index, "message_id": message.id})
     return result
 
 
