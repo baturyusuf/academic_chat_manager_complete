@@ -34,12 +34,14 @@ class Store:
             CREATE TABLE IF NOT EXISTS preferences(key TEXT PRIMARY KEY,value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS send_jobs(id TEXT PRIMARY KEY, collection_id INTEGER, message TEXT NOT NULL, files_json TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, finished_at TEXT);
             CREATE TABLE IF NOT EXISTS send_job_collections(job_id TEXT NOT NULL REFERENCES send_jobs(id) ON DELETE CASCADE, collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE, PRIMARY KEY(job_id,collection_id));
-            CREATE TABLE IF NOT EXISTS send_targets(id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL REFERENCES send_jobs(id) ON DELETE CASCADE, peer_id INTEGER NOT NULL, peer_title TEXT NOT NULL, status TEXT NOT NULL, error TEXT, telegram_message_id INTEGER, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(job_id,peer_id));
+            CREATE TABLE IF NOT EXISTS send_targets(id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL REFERENCES send_jobs(id) ON DELETE CASCADE, peer_id INTEGER NOT NULL, peer_title TEXT NOT NULL, status TEXT NOT NULL, error TEXT, telegram_message_id INTEGER, attachments_json TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(job_id,peer_id));
             CREATE TABLE IF NOT EXISTS cached_messages(peer_id INTEGER NOT NULL, message_id INTEGER NOT NULL, sender_id INTEGER, sender_name TEXT, text TEXT NOT NULL DEFAULT '', date TEXT, outgoing INTEGER NOT NULL DEFAULT 0, media_json TEXT, reactions_json TEXT, reply_json TEXT, PRIMARY KEY(peer_id,message_id));
             CREATE INDEX IF NOT EXISTS idx_messages_peer_date ON cached_messages(peer_id,date DESC);
             ''')
             columns={r[1] for r in c.execute("PRAGMA table_info(chats)")}
             if "available" not in columns:c.execute("ALTER TABLE chats ADD COLUMN available INTEGER NOT NULL DEFAULT 1")
+            target_columns={r[1] for r in c.execute("PRAGMA table_info(send_targets)")}
+            if "attachments_json" not in target_columns:c.execute("ALTER TABLE send_targets ADD COLUMN attachments_json TEXT")
             message_columns={r[1] for r in c.execute("PRAGMA table_info(cached_messages)")}
             if "reactions_json" not in message_columns:c.execute("ALTER TABLE cached_messages ADD COLUMN reactions_json TEXT")
             if "reply_json" not in message_columns:c.execute("ALTER TABLE cached_messages ADD COLUMN reply_json TEXT")
@@ -149,8 +151,8 @@ class Store:
             linked=sorted({int(x) for x in (collection_ids if collection_ids is not None else ([collection_id] if collection_id is not None else []))})
             c.executemany("INSERT OR IGNORE INTO send_job_collections(job_id,collection_id) VALUES(?,?)",[(job_id,cid) for cid in linked])
             c.executemany("INSERT INTO send_targets(job_id,peer_id,peer_title,status) VALUES(?,?,?,?)",[(job_id,t['peer_id'],t['title'],"pending") for t in targets])
-    def update_target(self,job_id,peer_id,status,error=None,message_id=None):
-        with self.db() as c:c.execute("UPDATE send_targets SET status=?,error=?,telegram_message_id=?,updated_at=CURRENT_TIMESTAMP WHERE job_id=? AND peer_id=?",(status,error,message_id,job_id,peer_id))
+    def update_target(self,job_id,peer_id,status,error=None,message_id=None,attachments=None):
+        with self.db() as c:c.execute("UPDATE send_targets SET status=?,error=?,telegram_message_id=?,attachments_json=?,updated_at=CURRENT_TIMESTAMP WHERE job_id=? AND peer_id=?",(status,error,message_id,json.dumps(attachments,ensure_ascii=False) if attachments is not None else None,job_id,peer_id))
     def cancel_job(self,job_id):
         with self.db() as c:
             cur=c.execute("UPDATE send_targets SET status='cancelled',error='Kullanıcı tarafından iptal edildi',updated_at=CURRENT_TIMESTAMP WHERE job_id=? AND status='pending'",(job_id,));cancelled=cur.rowcount
