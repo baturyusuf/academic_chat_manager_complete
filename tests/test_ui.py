@@ -377,6 +377,51 @@ def test_attachment_cards_show_metadata_and_emit_download_reference():
     assert captured[0]["peer_id"]==-17 and captured[0]["message_id"]==21
     assert json.loads(captured[0]["media_json"])["name"]=="ders.pdf"
 
+def test_image_attachment_has_preview_area():
+    from academic_chat_manager.main import MessageBubbleRow
+    row=MessageBubbleRow({"peer_id":-17,"message_id":21,"text":"","outgoing":0,"media_json":'{"name":"foto.jpg","size":2048,"mime_type":"image/jpeg"}'})
+    preview=row.findChild(__import__('PySide6.QtWidgets',fromlist=['QLabel']).QLabel,"imagePreview")
+    assert preview is not None and preview.property("mediaRequest")["message_id"]==21
+
+def test_invite_copy_text_excludes_errors_and_keeps_folder_indentation():
+    from academic_chat_manager.main import InviteLinksDialog
+    value=InviteLinksDialog._format_entries([
+        {"path":["Akademik","Bilgisayar"],"link":"https://t.me/+ok"},
+        {"path":["Akademik","YZ Laboratuvarı"],"link":"https://t.me/+ok2"},
+        {"path":["Akademik","Kişi"],"error":"Kişi sohbetleri desteklenmiyor"},
+    ])
+    assert "https://t.me/+ok" in value
+    assert "desteklenmiyor" not in value
+    assert "├──" in value and "└──" in value
+
+def test_dismissing_folder_context_menu_does_not_create_subfolder(tmp_path,monkeypatch):
+    app=QApplication.instance() or QApplication([])
+    from academic_chat_manager import main
+    monkeypatch.setattr(main,"Store",lambda:__import__('academic_chat_manager.storage',fromlist=['Store']).Store(tmp_path/"context-dismiss.sqlite3"))
+    main.PREFS.setValue("onboarding/dismissed",True)
+    w=MainWindow();folder=w.store.create_collection("Üniversite");w.refresh_tree();item=w._tree_items[folder]
+    monkeypatch.setattr(w.tree,"itemAt",lambda _pos:item)
+    class DismissedMenu:
+        def __init__(self,*_args):pass
+        def addAction(self,*_args):return object()
+        def addSeparator(self):pass
+        def exec(self,*_args):return None
+    monkeypatch.setattr(main,"QMenu",DismissedMenu)
+    before=len(w.store.collections());w._collection_menu(QPoint(0,0))
+    assert len(w.store.collections())==before
+    w.close()
+
+def test_folder_sidebar_can_be_hidden_and_restored(tmp_path,monkeypatch):
+    app=QApplication.instance() or QApplication([])
+    from academic_chat_manager import main
+    monkeypatch.setattr(main,"Store",lambda:__import__('academic_chat_manager.storage',fromlist=['Store']).Store(tmp_path/"sidebar.sqlite3"))
+    main.PREFS.setValue("onboarding/dismissed",True)
+    w=MainWindow();w.show();app.processEvents();w.toggle_sidebar()
+    assert not w.sidebar.isVisible() and w.store.preference("appearance/sidebar_visible") is False
+    w.toggle_sidebar()
+    assert w.sidebar.isVisible() and w.store.preference("appearance/sidebar_visible") is True
+    w.close()
+
 
 def test_bulk_history_can_download_each_sent_attachment(tmp_path,monkeypatch):
     from academic_chat_manager import main

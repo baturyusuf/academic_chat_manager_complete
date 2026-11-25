@@ -112,7 +112,8 @@ class TelegramService:
             else:kind="Grup"
             can_send=not getattr(ent,"restricted",False) and not getattr(ent,"left",False) and not (isinstance(ent,types.Channel) and getattr(ent,"broadcast",False) and not (getattr(ent,"creator",False) or getattr(getattr(ent,"admin_rights",None),"post_messages",False)))
             msg=d.message
-            row={"peer_id":peer_id,"access_hash":access_hash,"title":d.name or "(İsimsiz sohbet)","kind":kind,"username":getattr(ent,"username",None),"can_send":int(can_send),"unread_count":d.unread_count or 0,"last_message":getattr(msg,"message",None) or ("Medya" if getattr(msg,"media",None) else ""),"last_message_at":msg.date.isoformat() if msg and msg.date else None}
+            outgoing=bool(getattr(msg,"out",False));read_max=int(getattr(d.dialog,"read_outbox_max_id",0) or 0)
+            row={"peer_id":peer_id,"access_hash":access_hash,"title":d.name or "(İsimsiz sohbet)","kind":kind,"username":getattr(ent,"username",None),"can_send":int(can_send),"unread_count":d.unread_count or 0,"last_message":getattr(msg,"message",None) or ("Medya" if getattr(msg,"media",None) else ""),"last_message_at":msg.date.isoformat() if msg and msg.date else None,"last_message_outgoing":int(outgoing),"last_message_read":int(outgoing and msg is not None and msg.id<=read_max)}
             result.append(row); self._dialogs[peer_id]=ent
         return result
     def _entity(self,peer_id):
@@ -259,6 +260,18 @@ class TelegramService:
         finally:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
+    async def download_media_bytes(self,peer_id,message_id,max_bytes=12*1024*1024):
+        """Load a small image for an in-chat preview without creating a user file."""
+        msg=await self.client.get_messages(self._entity(peer_id),ids=message_id)
+        if not msg:raise FileNotFoundError("Telegram mesajı bulunamadı")
+        metadata=media_metadata(msg)
+        if not metadata or not str(metadata.get("mime_type") or "").lower().startswith("image/"):
+            return None
+        oversized=isinstance(metadata.get("size"),int) and metadata["size"]>max_bytes
+        data=await msg.download_media(file=bytes,thumb=0) if oversized else await msg.download_media(file=bytes)
+        if data is not None and len(data)>max_bytes:
+            return None
+        return data
     async def edit_message(self,peer_id,message_id,text):return await self.client.edit_message(self._entity(peer_id),message_id,text)
     async def delete_message(self,peer_id,message_id,revoke=True):return await self.client.delete_messages(self._entity(peer_id),message_id,revoke=revoke)
     async def search_messages(self,peer_id,query,limit=50):return await self.client.get_messages(self._entity(peer_id),search=query,limit=limit)
