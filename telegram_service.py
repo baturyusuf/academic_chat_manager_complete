@@ -120,7 +120,8 @@ class TelegramService:
             msg=d.message
             outgoing=bool(getattr(msg,"out",False));read_max=int(getattr(d.dialog,"read_outbox_max_id",0) or 0)
             self._read_outbox_max_ids[peer_id]=max(self._read_outbox_max_ids.get(peer_id,0),read_max)
-            row={"peer_id":peer_id,"access_hash":access_hash,"title":d.name or "(İsimsiz sohbet)","kind":kind,"username":getattr(ent,"username",None),"can_send":int(can_send),"unread_count":d.unread_count or 0,"last_message":getattr(msg,"message",None) or ("Medya" if getattr(msg,"media",None) else ""),"last_message_at":msg.date.isoformat() if msg and msg.date else None,"last_message_id":getattr(msg,"id",None),"last_message_outgoing":int(outgoing),"last_message_read":int(outgoing and msg is not None and msg.id<=read_max)}
+            last_message_id = getattr(msg, "id", None)
+            row={"peer_id":peer_id,"access_hash":access_hash,"title":d.name or "(İsimsiz sohbet)","kind":kind,"username":getattr(ent,"username",None),"can_send":int(can_send),"unread_count":d.unread_count or 0,"last_message":getattr(msg,"message",None) or ("Medya" if getattr(msg,"media",None) else ""),"last_message_at":msg.date.isoformat() if msg and msg.date else None,"last_message_id":last_message_id,"last_message_outgoing":int(outgoing),"last_message_read":int(outgoing and self.is_message_read(peer_id, last_message_id))}
             result.append(row); self._dialogs[peer_id]=ent
         return result
     def _entity(self,peer_id):
@@ -311,13 +312,17 @@ class TelegramService:
             self.client.add_event_handler(on_edited_message,events.MessageEdited())
         if read_handler is not None:
             async def on_message_read(event):
-                if not getattr(event,"outbox",False):return
-                peer=getattr(event,"peer",None);max_id=getattr(event,"max_id",None)
-                if peer is None or not max_id:return
-                peer_id=utils.get_peer_id(peer)
-                self._read_outbox_max_ids[peer_id]=max(self._read_outbox_max_ids.get(peer_id,0),int(max_id))
-                result=read_handler(peer_id,int(max_id))
-                if hasattr(result,"__await__"):await result
+                if not event.outbox or event.chat_id is None or not event.max_id:
+                    return
+                # MessageRead exposes the marked peer through ChatGetter.chat_id.
+                peer_id = event.chat_id
+                max_id = event.max_id
+                if max_id <= self._read_outbox_max_ids.get(peer_id, 0):
+                    return
+                self._read_outbox_max_ids[peer_id] = max_id
+                result = read_handler(peer_id, max_id)
+                if hasattr(result, "__await__"):
+                    await result
             self.client.add_event_handler(on_message_read,events.MessageRead())
     async def disconnect(self):
         if self.client:await self.client.disconnect();self.client=None

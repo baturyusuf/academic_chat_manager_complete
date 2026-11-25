@@ -404,6 +404,64 @@ def test_private_and_group_bubbles_follow_telegram_sender_and_receipt_rules():
     assert private_avatar.sender.isHidden() and hasattr(private_avatar,"sender_avatar")
     assert sent.ticks.text()=="✓" and read.ticks.text()=="✓✓"
 
+async def test_live_telegram_receipt_updates_bubbles_and_chat_row_without_restart(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from telethon import events, types
+
+    from academic_chat_manager import main
+    from academic_chat_manager.storage import Store
+
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(main, "Store", lambda: Store(tmp_path / "live-receipts.sqlite3"))
+    monkeypatch.setattr(main.security, "get_secret", lambda _: None)
+    main.PREFS.setValue("onboarding/dismissed", True)
+    w = MainWindow()
+    peer = 7
+    handlers = {}
+    w.telegram = main.TelegramService(tmp_path / "telegram-test")
+    w.telegram.client = SimpleNamespace(
+        is_connected=lambda: False,
+        add_event_handler=lambda handler, event: handlers.update({type(event): handler}))
+    date = "2026-11-25T10:00:00+00:00"
+    w.store.upsert_chats([{
+        "peer_id": peer, "access_hash": None, "title": "Kişi", "kind": "Kişi",
+        "username": None, "can_send": 1, "unread_count": 0,
+        "last_message": "Son mesaj", "last_message_at": date, "last_message_id": 49,
+        "last_message_outgoing": 1, "last_message_read": 0,
+    }])
+    w.store.cache_messages([
+        {"peer_id": peer, "message_id": number, "sender_id": peer,
+         "sender_name": "Kişi", "text": str(number), "date": date, "outgoing": outgoing,
+         "media_json": None}
+        for number, outgoing in [(47, 0), (48, 1), (49, 1)]
+    ])
+    try:
+        assert w._connected(SimpleNamespace(id=6, first_name="Test"))
+        w.selected_peer = peer
+        w.context_mode = "chat"
+        w.refresh_chats()
+        w._render_messages(peer)
+        bubbles = [w.messages.itemWidget(w.messages.item(i)) for i in range(3)]
+        assert bubbles[1].ticks.text() == bubbles[2].ticks.text() == "✓"
+        assert w.chat_list.item(0).text().splitlines()[1].startswith("✓ ")
+
+        handle = handlers[events.MessageRead]
+        await handle(events.MessageRead.build(types.UpdateReadHistoryOutbox(types.PeerUser(peer), 48, 1, 1)))
+        assert bubbles[1].ticks.text() == "✓✓"
+        assert bubbles[2].ticks.text() == "✓"
+        assert not w.messages.item(0).data(Qt.UserRole).get("read")
+        assert w.chat_list.item(0).text().splitlines()[1].startswith("✓ ")
+
+        await handle(events.MessageRead.build(types.UpdateReadHistoryOutbox(types.PeerUser(peer), 49, 2, 1)))
+        assert w.chat_list.item(0).text().splitlines()[1].startswith("✓✓ ")
+        assert w.store.chat(peer)["last_message_read"] == 1
+        assert bubbles[2].ticks.text() == "✓✓"
+        w._render_messages(peer)
+        assert w.messages.itemWidget(w.messages.item(2)) is bubbles[2]
+    finally:
+        w.telegram = None
+        w.close()
+
 async def test_image_preview_fetches_the_full_file_for_fullscreen(tmp_path,monkeypatch):
     from pathlib import Path
     from types import SimpleNamespace

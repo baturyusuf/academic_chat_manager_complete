@@ -1365,7 +1365,8 @@ class MainWindow(QMainWindow):
         previous=None
         for m in rows:
             m["chat_kind"]=kind
-            if read_checker:m["read"]=bool(m.get("read") or read_checker(peer_id,m["message_id"]))
+            if read_checker and m.get("outgoing"):
+                m["read"]=read_checker(peer_id,m["message_id"])
             if kind in ("Grup","Kanal","Kişi","Bot") and not m.get("outgoing"):
                 previous_time=_local_datetime(previous.get("date")) if previous else None
                 current_time=_local_datetime(m.get("date"))
@@ -1952,15 +1953,22 @@ class MainWindow(QMainWindow):
         if not row['outgoing']:self._show_local_notification(row)
     def _on_message_read(self,peer_id,max_message_id):
         """Reflect Telegram's outgoing read receipt in the chat list and open history."""
-        self.store.mark_last_message_read(peer_id,max_message_id)
-        self.refresh_chats()
-        if self.selected_peer!=peer_id or self.context_mode!="chat":return
+        if self.store.mark_last_message_read(peer_id,max_message_id):
+            self.refresh_chats()
+        if self.selected_peer!=peer_id or self.context_mode!="chat":
+            return
         for index in range(self.messages.count()):
-            item=self.messages.item(index);data=item.data(Qt.UserRole) or {}
-            if data.get("kind") or not data.get("outgoing") or int(data.get("message_id") or 0)>int(max_message_id):continue
-            data["read"]=True;item.setData(Qt.UserRole,data)
-            widget=self.messages.itemWidget(item)
-            if widget:widget.set_delivery_read(True)
+            item = self.messages.item(index)
+            data = item.data(Qt.UserRole) or {}
+            message_id = data.get("message_id")
+            if (data.get("peer_id") != peer_id or not data.get("outgoing")
+                    or data.get("read") or not message_id or message_id > max_message_id):
+                continue
+            data["read"] = True
+            item.setData(Qt.UserRole, data)
+            bubble = self.messages.itemWidget(item)
+            if bubble:
+                bubble.set_delivery_read(True)
     def _on_message_edited(self,row):
         """Edits are not new messages: no unread increment or arrival notification."""
         if not row.get("edit_date"):return

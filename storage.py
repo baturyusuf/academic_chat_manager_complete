@@ -72,7 +72,7 @@ class Store:
     def update_last_message(self,peer_id,text,date,incoming=False,outgoing=False,read=False,message_id=None):
         with self.db() as c:c.execute("UPDATE chats SET last_message=?,last_message_at=?,last_message_id=?,last_message_outgoing=?,last_message_read=?,unread_count=unread_count+? WHERE peer_id=?",(text,date,message_id,int(bool(outgoing)),int(bool(read)),int(bool(incoming)),peer_id))
     def mark_last_message_read(self,peer_id,max_message_id):
-        with self.db() as c:return c.execute("UPDATE chats SET last_message_read=1 WHERE peer_id=? AND last_message_outgoing=1 AND last_message_id IS NOT NULL AND last_message_id<=?",(peer_id,int(max_message_id))).rowcount>0
+        with self.db() as c:return c.execute("UPDATE chats SET last_message_read=1 WHERE peer_id=? AND last_message_outgoing=1 AND last_message_read=0 AND last_message_id<=?",(peer_id,int(max_message_id))).rowcount>0
     def clear_unread(self,peer_id):
         with self.db() as c:c.execute("UPDATE chats SET unread_count=0 WHERE peer_id=?",(peer_id,))
     def is_in_any_collection(self,peer_id):

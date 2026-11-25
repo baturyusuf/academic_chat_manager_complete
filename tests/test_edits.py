@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
-from telethon import events, types
+from telethon import events, types, utils
 
 from academic_chat_manager.telegram_service import TelegramService, edit_metadata
 
@@ -34,18 +34,26 @@ async def test_history_and_live_edits_receive_server_metadata(tmp_path):
 
 @pytest.mark.asyncio
 async def test_outgoing_read_updates_are_exposed_as_per_message_receipts(tmp_path):
-    class Client:
-        def __init__(self):self.handlers=[]
-        def add_event_handler(self,handler,event):self.handlers.append((handler,event))
-    service=TelegramService(tmp_path/"session-read")
-    service.client=Client();read_updates=[]
-    service.start_updates(lambda row:None,read_handler=lambda peer_id,max_id:read_updates.append((peer_id,max_id)))
-    handler=next(handler for handler,event in service.client.handlers if isinstance(event,events.MessageRead))
-    peer=types.PeerUser(7)
-    await handler(SimpleNamespace(outbox=False,peer=peer,max_id=49))
-    assert read_updates==[] and not service.is_message_read(7,49)
-    await handler(SimpleNamespace(outbox=True,peer=peer,max_id=49))
-    assert read_updates==[(7,49)] and service.is_message_read(7,49) and not service.is_message_read(7,50)
+    handlers = {}
+    service = TelegramService(tmp_path / "session-read")
+    service.client = SimpleNamespace(
+        add_event_handler=lambda handler, event: handlers.update({type(event): handler}))
+    read_updates = []
+    service.start_updates(lambda row: None, read_handler=lambda peer, max_id: read_updates.append((peer, max_id)))
+    handle = handlers[events.MessageRead]
+    peer = types.PeerUser(7)
+    await handle(events.MessageRead.build(types.UpdateReadHistoryInbox(peer, 49, 0, 1, 1)))
+    await handle(events.MessageRead.build(types.UpdateReadMessagesContents([49], 2, 1)))
+    assert read_updates == []
+    assert not service.is_message_read(7, 49)
+
+    await handle(events.MessageRead.build(types.UpdateReadHistoryOutbox(peer, 49, 3, 1)))
+    await handle(events.MessageRead.build(types.UpdateReadHistoryOutbox(peer, 45, 4, 1)))
+    await handle(events.MessageRead.build(types.UpdateReadChannelOutbox(8, 55)))
+    channel_id = utils.get_peer_id(types.PeerChannel(8))
+    assert read_updates == [(7, 49), (channel_id, 55)]
+    assert service.is_message_read(7, 49) and not service.is_message_read(7, 50)
+    assert service.is_message_read(channel_id, 55)
 
 def test_live_update_handlers_are_registered_only_once(tmp_path):
     class Client:
