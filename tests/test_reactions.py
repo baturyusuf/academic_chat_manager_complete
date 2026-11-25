@@ -18,7 +18,7 @@ def message(*counts):
 
 
 def emojis(reactions):
-    return [r.emoticon for r in reactions if isinstance(r,types.ReactionEmoji)]
+    return [r.emoticon for r in (reactions or []) if isinstance(r,types.ReactionEmoji)]
 
 
 def test_chosen_order_zero_is_selected_and_other_users_are_not_selected():
@@ -87,7 +87,7 @@ async def test_service_serializes_rapid_reactions_and_reuses_account_config(tmp_
     assert outcome=="removed" and emojis(service.client.requests[-1].reaction)==["🔥"]
     assert rows[0]["chosen"] is True
     outcome,rows=await service.send_reaction(-5,42,"🔥")
-    assert outcome=="removed" and service.client.requests[-1].reaction==[] and rows==[]
+    assert outcome=="removed" and service.client.requests[-1].reaction is None and rows==[]
 
 
 @pytest.mark.asyncio
@@ -97,3 +97,17 @@ async def test_successful_reaction_is_not_reported_as_failed_if_refresh_fails(tm
     service.client.fail_refresh=True
     assert await service.send_reaction(-5,42,"👍")==("added",None)
     assert len(service.client.requests)==1
+
+@pytest.mark.asyncio
+async def test_unchanged_server_response_refreshes_without_failure(tmp_path):
+    from telethon import errors
+    class Unchanged(Client):
+        async def __call__(self,request):
+            if isinstance(request,SendReactionRequest):
+                self.current=message(count("👍",0))
+                raise errors.MessageNotModifiedError(request)
+            return await super().__call__(request)
+    service=TelegramService(tmp_path/"session")
+    service.client=Unchanged()
+    outcome,rows=await service.send_reaction(-5,42,"👍")
+    assert outcome=="unchanged" and rows[0]["chosen"] is True
