@@ -28,7 +28,10 @@ def invite_error_message(error):
         "PEER_ID_INVALID":"Sohbet bulunamadı; sohbetleri eşitleyin.",
         "CHANNEL_MONOFORUM_UNSUPPORTED":"Bu sohbet türü davet bağlantısını desteklemiyor.",
     }
-    return translations.get(code,str(error).strip() or type(error).__name__)
+    # Generated Telethon RPC errors do not always expose the symbolic RPC code
+    # in .message; use their class names as an additional stable lookup.
+    by_class={"".join(word.title() for word in key.split("_"))+"Error":value for key,value in translations.items()}
+    return translations.get(code) or by_class.get(type(error).__name__) or str(error).strip() or type(error).__name__
 
 
 def edit_metadata(message):
