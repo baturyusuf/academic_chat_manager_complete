@@ -97,3 +97,22 @@ def test_attachment_references_survive_legacy_schema_migration(tmp_path):
     target=Store(path).job_targets("files")[0]
     assert target["telegram_message_id"]==29
     assert json.loads(target["attachments_json"])==records
+
+def test_edit_metadata_migration_and_stale_history_protection(tmp_path):
+    path=tmp_path/"legacy-edit.sqlite"
+    store=Store(path)
+    with store.db() as db:
+        db.execute("ALTER TABLE cached_messages DROP COLUMN edit_hidden")
+        db.execute("ALTER TABLE cached_messages DROP COLUMN edit_date")
+    store=Store(path)
+    original={"peer_id":-31,"message_id":5,"sender_id":1,"sender_name":"Yusuf","text":"İlk metin","date":"2026-11-19T12:00:00+00:00","outgoing":0,"media_json":None,"reactions_json":'[{"emoji":"👍","count":1}]',"reply_json":'{"sender":"Ayşe","text":"Merhaba"}'}
+    store.cache_messages([original])
+    edit={"peer_id":-31,"message_id":5,"text":"Düzeltilmiş metin","media_json":None,"edit_date":"2026-11-19T12:05:00+00:00","edit_hidden":0}
+    assert store.update_message_edit(edit)
+    assert not store.update_message_edit({**edit,"text":"Eski düzenleme","edit_date":"2026-11-19T12:04:00+00:00"})
+    store.cache_messages([original])
+    row=Store(path).messages(-31)[0]
+    assert row["text"]=="Düzeltilmiş metin" and row["edit_date"]==edit["edit_date"]
+    assert row["reactions_json"]==original["reactions_json"] and row["reply_json"]==original["reply_json"]
+    assert store.update_message_edit({**edit,"edit_date":"2026-11-19T12:06:00+00:00","edit_hidden":1})
+    assert store.messages(-31)[0]["edit_hidden"]==1
