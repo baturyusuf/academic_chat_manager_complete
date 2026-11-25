@@ -7,7 +7,7 @@ import time
 from datetime import timezone
 from pathlib import Path
 from telethon import TelegramClient, events, errors, types, utils
-from telethon.tl.functions.messages import GetHistoryRequest, SendReactionRequest
+from telethon.tl.functions.messages import GetHistoryRequest, SendReactionRequest, GetMessagesReactionsRequest
 from telethon.tl.functions.help import GetAppConfigRequest
 try:
     from .media import media_metadata
@@ -124,21 +124,40 @@ class TelegramService:
         self._reaction_limit_cache=(now,limit)
         return limit
 
+    @staticmethod
+    def _reaction_update(result,peer_id,message_id):
+        for update in getattr(result,"updates",[]) or []:
+            if isinstance(update,types.UpdateMessageReactions) and update.msg_id==message_id and utils.get_peer_id(update.peer)==int(peer_id) and not getattr(update.reactions,"min",False):
+                return update
+        return None
+
+    async def _full_reaction_message(self,peer,peer_id,message_id):
+        message=await self.client.get_messages(peer,ids=message_id)
+        if not message or isinstance(message,types.MessageEmpty):raise ValueError("Telegram mesajı bulunamadı")
+        if getattr(getattr(message,"reactions",None),"min",False):
+            updates=await self.client(GetMessagesReactionsRequest(peer=peer,id=[message_id]))
+            message=self._reaction_update(updates,peer_id,message_id)
+            if message is None:raise ValueError("Mesajın güncel tepki bilgisi alınamadı")
+        return message
+
     async def send_reaction(self,peer_id,message_id,emoji):
         # Serialize read/modify/write so rapid clicks cannot overwrite one another.
         async with self._reaction_lock:
             peer=self._entity(int(peer_id));message_id=int(message_id)
-            message=await self.client.get_messages(peer,ids=message_id)
-            if not message:raise ValueError("Telegram mesajı bulunamadı")
+            message=await self._full_reaction_message(peer,peer_id,message_id)
             desired,outcome=next_reactions(message,emoji,await self._reaction_limit())
-            result=await self.client(SendReactionRequest(peer=peer,msg_id=message_id,reaction=desired))
-            for update in getattr(result,"updates",[]) or []:
-                if isinstance(update,types.UpdateMessageReactions) and update.msg_id==message_id and utils.get_peer_id(update.peer)==int(peer_id):
-                    return outcome,reaction_rows(update)
+            # The official desktop client omits the optional reaction vector when clearing the last reaction.
+            try:
+                result=await self.client(SendReactionRequest(peer=peer,msg_id=message_id,reaction=desired or None,add_to_recent=outcome!="removed"))
+            except errors.MessageNotModifiedError:
+                result=None
+                outcome="unchanged"
+            update=self._reaction_update(result,peer_id,message_id)
+            if update is not None:return outcome,reaction_rows(update)
             # Fetch the exact message, including older/search results, not just latest history.
             try:
-                updated=await self.client.get_messages(peer,ids=message_id)
-                return outcome,reaction_rows(updated) if updated else None
+                updated=await self._full_reaction_message(peer,peer_id,message_id)
+                return outcome,reaction_rows(updated)
             except Exception:
                 # The mutation succeeded; do not report it as a failed send.
                 return outcome,None
