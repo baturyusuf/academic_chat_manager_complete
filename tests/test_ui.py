@@ -223,15 +223,16 @@ def test_dismissing_message_context_menu_does_not_start_download(tmp_path,monkey
     monkeypatch.setattr(main,"Store",lambda:__import__('academic_chat_manager.storage',fromlist=['Store']).Store(tmp_path/"menu.sqlite3"))
     main.PREFS.setValue("onboarding/dismissed",True)
     w=MainWindow();w.messages.resize(500,300);item=main.QListWidgetItem();item.setData(main.Qt.UserRole,{"peer_id":-9701,"message_id":1,"sender_name":"Yusuf","text":"Test","outgoing":0,"media_json":None});w.messages.addItem(item);w.messages.show();app.processEvents()
-    class FakeMenu:
-        def __init__(self,*args):pass
-        def addAction(self,*args):return object()
-        def addMenu(self,*args):return FakeMenu()
-        def exec(self,*args):return None
+    opened=[]
+    class FakeMenu(main.QMenu):
+        def exec(self,*args):
+            opened.append(True)
+            return None
     monkeypatch.setattr(main,"QMenu",FakeMenu)
     def fail_if_download(*args):raise AssertionError("menu dismissal must not start a download")
     monkeypatch.setattr(main.QFileDialog,"getSaveFileName",fail_if_download)
-    w._message_menu(QPoint(10,10))
+    w._message_menu(w.messages.visualItemRect(item).center(),item=item)
+    assert opened==[True]
     w.close()
 
 def test_chat_message_time_uses_local_timezone_and_displays_reactions():
@@ -310,4 +311,54 @@ def test_application_icons_scale_and_follow_theme(tmp_path,monkeypatch):
         assert w._tree_items[custom].text(0).startswith("⭐")
     finally:
         w.font_size.setValue(13)
+        w.close()
+
+def test_message_context_menu_is_shared_by_bubble_children_and_list(tmp_path,monkeypatch):
+    from academic_chat_manager import main
+    from PySide6.QtGui import QContextMenuEvent
+    app=QApplication.instance() or QApplication([])
+    monkeypatch.setattr(main,"Store",lambda:__import__('academic_chat_manager.storage',fromlist=['Store']).Store(tmp_path/"unified-menu.sqlite3"))
+    main.PREFS.setValue("onboarding/dismissed",True)
+    w=MainWindow()
+    try:
+        message={"peer_id":-9701,"message_id":1,"sender_name":"Yusuf","text":"Test mesajı","date":"2026-11-19T12:30:00+00:00","outgoing":1,"media_json":'{"name":"test.txt"}',"reply_json":'{"sender":"Ayşe","text":"Önceki mesaj"}',"reactions_json":'[{"emoji":"👍","count":2}]'}
+        w._append_message_bubble(message)
+        item=w.messages.item(0)
+        row=w.messages.itemWidget(item)
+        w.show()
+        app.processEvents()
+        menus=[]
+        choose_text=None
+        class CaptureMenu(main.QMenu):
+            def exec(self,*args):
+                actions=[action for action in self.actions() if not action.isSeparator()]
+                menus.append([action.text() for action in actions])
+                assert all(not action.icon().isNull() for action in actions)
+                return next((action for action in actions if action.text()==choose_text),None)
+        monkeypatch.setattr(main,"QMenu",CaptureMenu)
+        expected=["Yanıtla","Metni kopyala","Tepki bırak","Dosyayı indir…","Mesajı düzenle","Mesajı sil"]
+        def context_click(widget):
+            pos=widget.rect().center()
+            event=QContextMenuEvent(QContextMenuEvent.Reason.Mouse,pos,widget.mapToGlobal(pos))
+            QApplication.sendEvent(widget,event)
+        for widget in (row,row.bubble,row.body,row.sender,row.footer,row.reply_quote,row.reactions_label):
+            context_click(widget)
+        w.messages.customContextMenuRequested.emit(w.messages.visualItemRect(item).center())
+        assert menus==[expected]*8
+        row.body.setSelection(0,4)
+        choose_text="Seçili metni kopyala"
+        context_click(row.body)
+        assert "Seçili metni kopyala" in menus[-1]
+        assert app.clipboard().text()=="Test"
+        choose_text="Metni kopyala"
+        context_click(row.bubble)
+        assert app.clipboard().text()=="Test mesajı"
+        # Incoming text-only messages must not expose outgoing/media operations.
+        w._append_message_bubble({**message,"message_id":2,"outgoing":0,"media_json":None})
+        incoming=w.messages.itemWidget(w.messages.item(1))
+        choose_text=None
+        context_click(incoming.body)
+        assert menus[-1]==["Yanıtla","Metni kopyala","Tepki bırak"]
+    finally:
+        app.clipboard().clear()
         w.close()
