@@ -362,3 +362,39 @@ def test_message_context_menu_is_shared_by_bubble_children_and_list(tmp_path,mon
     finally:
         app.clipboard().clear()
         w.close()
+
+def test_attachment_cards_show_metadata_and_emit_download_reference():
+    from academic_chat_manager import main
+    import json
+    app=QApplication.instance() or QApplication([])
+    row=main.MessageBubbleRow({"peer_id":-17,"message_id":21,"text":"","outgoing":0,"media_json":'{"name":"ders.pdf","size":2048,"mime_type":"application/pdf"}'})
+    captured=[]
+    row.downloadRequested.connect(captured.append)
+    assert any(label.text()=="ders.pdf" for label in row.findChildren(main.QLabel))
+    assert any("2.0 KB" in label.text() for label in row.findChildren(main.QLabel))
+    assert len(row.attachment_buttons)==1 and row.attachment_buttons[0].isEnabled()
+    row.attachment_buttons[0].click()
+    assert captured[0]["peer_id"]==-17 and captured[0]["message_id"]==21
+    assert json.loads(captured[0]["media_json"])["name"]=="ders.pdf"
+
+
+def test_bulk_history_can_download_each_sent_attachment(tmp_path,monkeypatch):
+    from academic_chat_manager import main
+    app=QApplication.instance() or QApplication([])
+    monkeypatch.setattr(main,"Store",lambda:__import__('academic_chat_manager.storage',fromlist=['Store']).Store(tmp_path/"media-history.sqlite3"))
+    main.PREFS.setValue("onboarding/dismissed",True)
+    w=MainWindow()
+    try:
+        folder=w.store.create_collection("Dosyalar")
+        w.store.create_job("files",folder,"Duyuru",["missing-a.pdf","missing-b.txt"],[{"peer_id":-17,"title":"Grup"}])
+        records=[{"index":0,"name":"missing-a.pdf","size":2048,"message_id":21},{"index":1,"name":"missing-b.txt","size":1024,"message_id":29}]
+        w.store.update_target("files",-17,"sent",message_id=29,attachments=records)
+        w.refresh_history()
+        assert w.history_download_btn.isEnabled()
+        assert [card["message_id"] for card in w._history_downloadable("files")]==[21,29]
+        w.active_collection_ids=[folder]
+        w._render_collection_history()
+        row=w.messages.itemWidget(w.messages.item(0))
+        assert len(row.attachment_buttons)==2 and all(button.isEnabled() for button in row.attachment_buttons)
+    finally:
+        w.close()
