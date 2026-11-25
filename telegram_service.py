@@ -14,6 +14,20 @@ try:
 except ImportError:
     from media import media_metadata
 
+def edit_metadata(message):
+    """Telegram may suppress the edited label while still providing an edit date."""
+    date=getattr(message,"edit_date",None)
+    return {"edit_date":date.isoformat() if date else None,
+            "edit_hidden":int(bool(getattr(message,"edit_hide",False)))}
+
+
+def edited_message_row(message,peer_id):
+    media=media_metadata(message)
+    return {"peer_id":peer_id,"message_id":message.id,"text":message.message or "",
+            "media_json":__import__("json").dumps(media,ensure_ascii=False) if media else None,
+            **edit_metadata(message)}
+
+
 def emoji_key(emoji):
     return str(emoji).replace("\ufe0f", "").replace("\ufe0e", "")
 
@@ -95,7 +109,7 @@ class TelegramService:
             file=media_metadata(m)
             reactions=reaction_rows(m)
             reply_id=getattr(getattr(m,"reply_to",None),"reply_to_msg_id",None)
-            rows.append({"peer_id":peer_id,"message_id":m.id,"sender_id":m.sender_id,"sender_name":sender_name,"text":m.message or "","date":m.date.isoformat() if m.date else None,"outgoing":int(m.out),"media_json":__import__('json').dumps(file,ensure_ascii=False) if file else None,"reactions_json":__import__('json').dumps(reactions,ensure_ascii=False),"reply_to_message_id":reply_id,"message":m})
+            rows.append({"peer_id":peer_id,"message_id":m.id,"sender_id":m.sender_id,"sender_name":sender_name,"text":m.message or "","date":m.date.isoformat() if m.date else None,"outgoing":int(m.out),"media_json":__import__('json').dumps(file,ensure_ascii=False) if file else None,"reactions_json":__import__('json').dumps(reactions,ensure_ascii=False),"reply_to_message_id":reply_id,**edit_metadata(m),"message":m})
         return rows
     async def send_text(self,peer_id,text,reply_to=None):return await self.client.send_message(self._entity(peer_id),text,reply_to=reply_to)
     async def export_chat_invite_link(self,peer_id):
@@ -196,16 +210,23 @@ class TelegramService:
     async def edit_message(self,peer_id,message_id,text):return await self.client.edit_message(self._entity(peer_id),message_id,text)
     async def delete_message(self,peer_id,message_id,revoke=True):return await self.client.delete_messages(self._entity(peer_id),message_id,revoke=revoke)
     async def search_messages(self,peer_id,query,limit=50):return await self.client.get_messages(self._entity(peer_id),search=query,limit=limit)
-    def start_updates(self,handler):
+    def start_updates(self,handler,edit_handler=None):
         """Forward Telegram message updates to the UI without changing read state."""
         async def on_new_message(event):
             m=event.message; peer_id=utils.get_peer_id(event.message.peer_id); sender=getattr(m,"sender",None)
             name=(" ".join(filter(None,[getattr(sender,"first_name",None),getattr(sender,"last_name",None)])) or getattr(sender,"title",None)) if sender else ("Siz" if m.out else str(m.sender_id or ""))
             media=media_metadata(m)
-            row={"peer_id":peer_id,"chat_title":getattr(event.chat,"title",None) or getattr(event.chat,"first_name",None) or name,"message_id":m.id,"sender_id":m.sender_id,"sender_name":name,"text":m.message or "","date":m.date.isoformat() if m.date else None,"outgoing":int(m.out),"media_json":__import__('json').dumps(media,ensure_ascii=False) if media else None,"reactions_json":__import__('json').dumps(reaction_rows(m),ensure_ascii=False),"message":m}
+            row={"peer_id":peer_id,"chat_title":getattr(event.chat,"title",None) or getattr(event.chat,"first_name",None) or name,"message_id":m.id,"sender_id":m.sender_id,"sender_name":name,"text":m.message or "","date":m.date.isoformat() if m.date else None,"outgoing":int(m.out),"media_json":__import__('json').dumps(media,ensure_ascii=False) if media else None,"reactions_json":__import__('json').dumps(reaction_rows(m),ensure_ascii=False),**edit_metadata(m),"message":m}
             result=handler(row)
             if hasattr(result,"__await__"):await result
         self.client.add_event_handler(on_new_message,events.NewMessage())
+        if edit_handler is not None:
+            async def on_edited_message(event):
+                m=event.message
+                row=edited_message_row(m,utils.get_peer_id(m.peer_id))
+                result=edit_handler(row)
+                if hasattr(result,"__await__"):await result
+            self.client.add_event_handler(on_edited_message,events.MessageEdited())
     async def disconnect(self):
         if self.client:await self.client.disconnect();self.client=None
     async def log_out(self):
