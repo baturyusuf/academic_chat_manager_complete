@@ -158,6 +158,7 @@ def _theme_stylesheet(dark: bool, accent: str) -> str:
     QScrollArea#settingsPage,QScrollArea#settingsPage QWidget#qt_scrollarea_viewport,QWidget#settingsInner{{background:{c['surface']}}}
     QFrame#chatHeader{{background:{c['surface']};border:0;border-bottom:1px solid {c['border']};border-top-left-radius:14px;border-top-right-radius:14px}}
     QFrame#replyPreviewFrame{{background:{c['raised']};border-left:3px solid {accent};border-radius:7px}}
+    QFrame#notificationBanner{{background:{c['raised']};border-left:3px solid {accent};border-radius:7px}}
     QLabel#brandTitle,QLabel#sectionTitle{{font-weight:700;color:{c['text']}}}
     QLabel#brandSubtitle,QLabel#muted{{color:{c['muted']}}}
     QPushButton{{border:0;border-radius:9px;background:transparent;padding:8px 11px;text-align:left;color:{c['text']}}}
@@ -606,10 +607,32 @@ class MainWindow(QMainWindow):
         self.splitter=QSplitter(Qt.Horizontal);self.splitter.setChildrenCollapsible(False);self.splitter.setHandleWidth(7);self.splitter.addWidget(self._center_panel());self.splitter.addWidget(self._conversation_panel());self.splitter.setSizes(self.store.preference("panel_sizes",[460,920]));self.splitter.setStretchFactor(1,1);self.main_splitter.addWidget(self.splitter);self.main_splitter.setSizes(self.store.preference("main_panel_sizes",[210,1340]));self.main_splitter.setStretchFactor(1,1);body.addWidget(self.main_splitter,1);outer.addLayout(body,1);self.setCentralWidget(root);self.setStatusBar(QStatusBar());self.statusBar().showMessage("Telegram bağlantısı kurulmadı")
         toolbar=QHBoxLayout();self.sidebar_toggle=_icon_button("panel",tooltip="Menü panelini aç veya kapat");self.sidebar_toggle.clicked.connect(self.toggle_sidebar);toolbar.addWidget(self.sidebar_toggle)
         self.global_search=QLineEdit();self.global_search.setPlaceholderText("Sohbetlerde ara…  Ctrl+K");self.global_search.setFixedWidth(330);self.global_search.textChanged.connect(lambda _:self.refresh_chats());toolbar.addWidget(self.global_search);shortcut=QShortcut(QKeySequence("Ctrl+K"),self);shortcut.activated.connect(self.global_search.setFocus);toolbar.addStretch();self.connection_label=QLabel("●  Bağlantı yok");toolbar.addWidget(self.connection_label);self.account_label=QLabel("Telegram kullanıcısı");toolbar.addWidget(self.account_label);outer.insertLayout(0,toolbar)
+        outer.insertWidget(1, self._build_notification_banner())
         self.splitter.splitterMoved.connect(lambda *_:self.store.set_preference("panel_sizes",self.splitter.sizes()))
         self.main_splitter.splitterMoved.connect(lambda *_:self.store.set_preference("main_panel_sizes",self.main_splitter.sizes()))
         self.tray=QSystemTrayIcon(self);self.tray.setIcon(QIcon(str(APP_DIR/"assets"/"app.ico")));self.tray.setToolTip("Akademik Sohbet Yöneticisi");self.tray.show()
+        self.tray.messageClicked.connect(self._open_recent_notifications)
         if not self.store.preference("appearance/sidebar_visible",True):self.sidebar.hide()
+    def _build_notification_banner(self):
+        self.notification_banner = QFrame(objectName="notificationBanner")
+        row = QHBoxLayout(self.notification_banner)
+        row.setContentsMargins(12, 2, 4, 2)
+        self.notification_banner_text = QLabel()
+        self.notification_banner_text.setTextFormat(Qt.PlainText)
+        self.notification_banner_text.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        row.addWidget(self.notification_banner_text, 1)
+        view = QPushButton("Bildirimi oku")
+        view.clicked.connect(self._open_recent_notifications)
+        row.addWidget(view)
+        close = _icon_button("close", tooltip="Bildirimi kapat")
+        close.clicked.connect(self.notification_banner.hide)
+        row.addWidget(close)
+        self.notification_banner_timer = QTimer(self)
+        self.notification_banner_timer.setSingleShot(True)
+        self.notification_banner_timer.timeout.connect(self.notification_banner.hide)
+        self.notification_banner.hide()
+        return self.notification_banner
+
     def toggle_sidebar(self):
         if self.sidebar.isVisible():
             self.sidebar.hide();self.store.set_preference("appearance/sidebar_visible",False)
@@ -676,6 +699,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(general, "Genel")
         scope_box = QGroupBox("Masaüstü bildirimleri")
         scope_form = QFormLayout(scope_box)
+        scope_form.setRowWrapPolicy(QFormLayout.WrapLongRows)
         self.notification_mode = QComboBox()
         self.notification_mode.addItems(NOTIFICATION_SCOPES)
         self.notification_mode.setCurrentText(self.store.preference("notifications/mode", NOTIFICATION_SCOPES[0]))
@@ -687,13 +711,14 @@ class MainWindow(QMainWindow):
         self.notification_preview.toggled.connect(
             lambda value: self.store.set_preference("notifications/preview", value))
         scope_form.addRow(self.notification_preview)
-        note("Bu ayarlar bu bilgisayardaki uygulamaya uygulanır. "
-             "Masaüstü bildirimleri pencere gizliyken veya küçültülmüşken gösterilir.", scope_form)
+        note("Bildirimler pencere görünürken uygulama içinde, pencere gizliyken veya "
+             "küçültülmüşken Windows’ta gösterilir.", scope_form)
         note("Mesaj metni burada kapatılırsa tüm sohbet türlerinde gizlenir.", scope_form)
         options.addWidget(scope_box)
 
         kinds_box = QGroupBox("Sohbet türüne göre varsayılanlar")
         kinds_form = QFormLayout(kinds_box)
+        kinds_form.setRowWrapPolicy(QFormLayout.WrapLongRows)
         self.notification_kind_modes = {}
         self.notification_kind_previews = {}
         for kind, label in NOTIFICATION_KINDS.items():
@@ -776,13 +801,59 @@ class MainWindow(QMainWindow):
         self.notification_chat_rule = self._notification_rule_combo(
             ("default", "all", "mentions", "priority", "off"))
         rule_form = QFormLayout()
+        rule_form.setRowWrapPolicy(QFormLayout.WrapLongRows)
         rule_form.addRow("Seçili sohbetin kuralı", self.notification_chat_rule)
         chats_layout.addLayout(rule_form)
         self.notification_chat_rule.setEnabled(False)
         self.notification_chat_rule.currentIndexChanged.connect(self._change_notification_chat_rule)
         self.notification_chats.currentItemChanged.connect(self._load_notification_chat_rule)
+
+        recent = QWidget()
+        recent_layout = QVBoxLayout(recent)
+        note("Bu oturumun bildirimleri. Tam metni okumak için bir bildirim seç.", recent_layout)
+        self.notification_inbox = QListWidget()
+        recent_layout.addWidget(self.notification_inbox, 1)
+        self.notification_detail = QPlainTextEdit()
+        self.notification_detail.setReadOnly(True)
+        self.notification_detail.setLineWrapMode(QPlainTextEdit.WidgetWidth)
+        self.notification_detail.setAccessibleName("Bildirimin tam metni")
+        self.notification_detail.setPlaceholderText("Henüz bildirim yok.")
+        recent_layout.addWidget(self.notification_detail, 2)
+        self.notification_inbox.currentItemChanged.connect(self._read_notification)
+        tabs.addTab(recent, "Son bildirimler")
+        self.notification_recent_page = recent
         self.notification_tabs = tabs
         return page
+
+    def _open_recent_notifications(self):
+        if self.isMinimized():
+            self.setWindowState(self.windowState() & ~Qt.WindowMinimized)
+        if not self.isVisible():
+            self.show()
+        self.raise_()
+        self.activateWindow()
+        self.navigate("notifications")
+        self.notification_tabs.setCurrentWidget(self.notification_recent_page)
+        self.notification_inbox.setCurrentRow(0)
+        self.notification_banner.hide()
+
+    def _read_notification(self, item, _previous):
+        self.notification_detail.setPlainText(item.data(Qt.UserRole) if item else "")
+
+    def _record_notification(self, title, body, show_banner):
+        item = QListWidgetItem(f"{QTime.currentTime().toString('HH:mm')} · {title}")
+        item.setData(Qt.UserRole, f"{title}\n\n{body}")
+        self.notification_inbox.insertItem(0, item)
+        if self.notification_inbox.count() > 100:
+            self.notification_inbox.takeItem(100)
+        if self.notification_inbox.currentItem() is None:
+            self.notification_inbox.setCurrentItem(item)
+        if show_banner:
+            summary = " ".join(body.split())
+            summary = summary[:117] + "…" if len(summary) > 120 else summary
+            self.notification_banner_text.setText(f"{title} · {summary}")
+            self.notification_banner.show()
+            self.notification_banner_timer.start(8000)
 
     @staticmethod
     def _notification_rule_combo(choices):
@@ -1849,6 +1920,8 @@ class MainWindow(QMainWindow):
             answer=QMessageBox.question(self,"Farklı Telegram hesabı", "Başka bir Telegram hesabına geçiyorsunuz. Önceki hesaba ait sohbet önbelleği temizlenecek; koleksiyon klasörleri korunacak fakat sohbet üyelikleri silinecek. Devam edilsin mi?",QMessageBox.Yes|QMessageBox.No)
             if answer!=QMessageBox.Yes:return False
             self.store.clear_telegram_data()
+            self.notification_inbox.clear()
+            self.notification_banner.hide()
             self._avatar_cache.clear()
             self._image_preview_cache.clear()
         if user_id is not None:self.store.set_preference('telegram/user_id',int(user_id))
@@ -1904,10 +1977,13 @@ class MainWindow(QMainWindow):
             break
 
     def _show_local_notification(self, row):
-        if row.get("outgoing") or self._notification_window_is_foreground():
+        if row.get("outgoing"):
             return
         peer_id = row["peer_id"]
-        if self.context_mode == "chat" and self.selected_peer == peer_id:
+        window_visible = self._notification_window_is_visible()
+        if (window_visible and self.active_nav in ("chats", "folders")
+                and self.context_mode == "chat" and self.selected_peer == peer_id
+                and self.isActiveWindow()):
             return
         scope = self.notification_mode.currentText()
         if scope == "Sessiz mod":
@@ -1935,12 +2011,17 @@ class MainWindow(QMainWindow):
         show_text = self.notification_preview.isChecked() and (preview is None or preview.isChecked())
         title = chat.get("title") or row.get("chat_title") or "Telegram sohbeti"
         body = (row.get("text") or "Yeni bir medya iletisi") if show_text else "Yeni Telegram iletisi"
+        if priority:
+            title = f"Önemli · {title}"
+        self._record_notification(title, body, show_banner=window_visible)
+        if window_visible:
+            return
+
         now = monotonic()
         if priority:
             if now-self._last_priority_notification_at < 5:
                 self._suppressed_priority_notifications += 1
                 return
-            title = f"Önemli · {title}"
             suppressed = self._suppressed_priority_notifications
             self._suppressed_priority_notifications = 0
             self._last_priority_notification_at = now
@@ -1962,7 +2043,7 @@ class MainWindow(QMainWindow):
             return start <= now < end
         return now >= start or now < end
 
-    def _notification_window_is_foreground(self):
+    def _notification_window_is_visible(self):
         # Qt/Windows can briefly report an on-screen window as inactive while
         # focus moves between child widgets. A native tray toast is queued by
         # Windows and cannot be withdrawn afterward, so visibility is the safe

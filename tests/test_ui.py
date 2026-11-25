@@ -164,36 +164,60 @@ def test_chat_multi_selection_survives_refresh_and_suppresses_history(tmp_path,m
     assert w.context_mode=="selection" and w.messages.count()==0
     w.close()
 
-def test_notifications_are_suppressed_for_visible_app_and_open_chat(tmp_path,monkeypatch):
-    app=QApplication.instance() or QApplication([])
+def test_visible_notifications_use_one_banner_and_keep_full_message(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
     from academic_chat_manager import main
-    monkeypatch.setattr(main,"Store",lambda:__import__('academic_chat_manager.storage',fromlist=['Store']).Store(tmp_path/"notification-ui.sqlite3"))
-    main.PREFS.setValue("onboarding/dismissed",True)
-    w=MainWindow();peer=-760
-    w.store.upsert_chats([{"peer_id":peer,"access_hash":1,"title":"Bildirim testi","kind":"Grup","username":None,"can_send":1,"unread_count":0,"last_message":"","last_message_at":None}])
-    calls=[]
-    class Tray:
-        def showMessage(self,*args):calls.append(args)
-    w.tray=Tray()
-    # The app can be visible even when Windows/Qt briefly loses the active flag
-    # while the user moves between widgets. Visible must still suppress toasts.
-    monkeypatch.setattr(w,"isVisible",lambda:True)
-    monkeypatch.setattr(w,"isMinimized",lambda:False)
-    assert w._notification_window_is_foreground()
-    w._show_local_notification({"peer_id":peer,"text":"Yeni ileti","outgoing":0})
-    assert calls==[]
-    monkeypatch.setattr(w,"isVisible",lambda:False)
-    assert not w._notification_window_is_foreground()
-    w.context_mode="chat";w.selected_peer=peer
-    w._show_local_notification({"peer_id":peer,"text":"Açık sohbetteki ileti","outgoing":0})
-    w._show_local_notification({"peer_id":peer,"text":"Kendi gönderdiğim ileti","outgoing":1})
-    assert calls==[]
-    w.context_mode="none";w.selected_peer=None
-    times=iter((10.0,11.0));monkeypatch.setattr(main,"monotonic",lambda:next(times))
-    w._show_local_notification({"peer_id":peer,"text":"Arka plandaki ilk ileti","outgoing":0})
-    w._show_local_notification({"peer_id":peer,"text":"Arka plandaki ikinci ileti","outgoing":0})
-    assert len(calls)==1 and w._suppressed_notifications==1
-    w.close()
+    from academic_chat_manager.storage import Store
+
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(main, "Store", lambda: Store(tmp_path / "notification-ui.sqlite3"))
+    monkeypatch.setattr(main.security, "get_secret", lambda _: None)
+    main.PREFS.setValue("onboarding/dismissed", True)
+    w = MainWindow()
+    calls = []
+    w.tray = SimpleNamespace(showMessage=lambda *args: calls.append(args))
+    w.show()
+    app.processEvents()
+    visible_windows = {widget for widget in app.topLevelWidgets() if widget.isVisible()}
+    peer = -760
+    record = {"peer_id": peer, "chat_title": "Ders grubu", "outgoing": 0}
+    long_text = "Birinci satır\n" + "uzun mesaj " * 80 + "Son satır."
+    try:
+        w._show_local_notification({**record, "text": "İlk ileti"})
+        w._show_local_notification({**record, "text": long_text})
+        assert w.notification_banner.isVisible()
+        assert w.notification_banner_text.text().endswith("…")
+        assert {widget for widget in app.topLevelWidgets() if widget.isVisible()} == visible_windows
+        assert calls == []
+        assert w.notification_inbox.count() == 2
+        w._open_recent_notifications()
+        assert w.notification_tabs.currentWidget() is w.notification_recent_page
+        assert w.notification_detail.toPlainText() == "Ders grubu\n\n" + long_text
+        assert not w.notification_banner.isVisible()
+
+        w.navigate("chats")
+        w.context_mode = "chat"
+        w.selected_peer = peer
+        monkeypatch.setattr(w, "isActiveWindow", lambda: True)
+        w._show_local_notification({**record, "text": "Okumakta olduğum sohbet"})
+        assert w.notification_inbox.count() == 2
+
+        # The same conversation must notify after the window is minimized.
+        monkeypatch.setattr(w, "isMinimized", lambda: True)
+        times = iter((10.0, 11.0))
+        monkeypatch.setattr(main, "monotonic", lambda: next(times))
+        w._show_local_notification({**record, "text": "Pencere küçültülmüşken"})
+        w._show_local_notification({**record, "text": "Kısa aralıkta ikinci ileti"})
+        assert len(calls) == 1 and w._suppressed_notifications == 1
+        assert w.notification_inbox.count() == 4
+        w._show_local_notification({**record, "outgoing": 1, "text": "Kendi mesajım"})
+        w.notification_mode.setCurrentText("Sessiz mod")
+        w._show_local_notification({**record, "text": "Sessiz moddayken"})
+        assert w.notification_inbox.count() == 4
+        assert len(calls) == 1
+    finally:
+        w.close()
 
 def test_notification_rules_and_priority_are_saved_and_applied(tmp_path, monkeypatch):
     from academic_chat_manager import main
