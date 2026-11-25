@@ -83,3 +83,17 @@ def test_manual_cancellation_marks_pending_targets_and_preserves_sent_targets(st
     store.create_job("cancel-job",folder,"Duyuru",[],targets)
     assert store.cancel_job("cancel-job")
     assert all(r["status"]=="cancelled" for r in store.job_targets("cancel-job"))
+
+def test_attachment_references_survive_legacy_schema_migration(tmp_path):
+    import json
+    path=tmp_path/"legacy-attachments.sqlite"
+    store=Store(path)
+    with store.db() as db:
+        db.execute("ALTER TABLE send_targets DROP COLUMN attachments_json")
+    reopened=Store(path)
+    reopened.create_job("files",None,"",["a.pdf","b.txt"],[{"peer_id":-71,"title":"Grup"}])
+    records=[{"index":0,"name":"a.pdf","size":123,"message_id":21},{"index":1,"name":"b.txt","size":456,"message_id":29}]
+    reopened.update_target("files",-71,"sent",message_id=29,attachments=records)
+    target=Store(path).job_targets("files")[0]
+    assert target["telegram_message_id"]==29
+    assert json.loads(target["attachments_json"])==records
