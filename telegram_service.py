@@ -2,10 +2,15 @@
 from __future__ import annotations
 import asyncio
 import os
+import tempfile
 from datetime import timezone
 from pathlib import Path
 from telethon import TelegramClient, events, errors, types, utils
 from telethon.tl.functions.messages import GetHistoryRequest, SendReactionRequest
+try:
+    from .media import media_metadata
+except ImportError:
+    from media import media_metadata
 
 class TelegramService:
     def __init__(self,session_path:Path):
@@ -52,9 +57,7 @@ class TelegramService:
             # do not issue one network request per message while paging history.
             sender=getattr(m,"sender",None)
             sender_name=(" ".join(filter(None,[getattr(sender,"first_name",None),getattr(sender,"last_name",None)])) or getattr(sender,"title",None)) if sender else ("Siz" if m.out else str(m.sender_id or ""))
-            file=None
-            if m.media:
-                f=m.file; file={"name":getattr(f,"name",None) or getattr(f,"ext",None) or "Ek", "size":getattr(f,"size",None),"mime_type":getattr(f,"mime_type",None)}
+            file=media_metadata(m)
             reaction_rows=[]
             for item in getattr(getattr(m,"reactions",None),"results",[]) or []:
                 emoji=getattr(getattr(item,"reaction",None),"emoticon",None)
@@ -85,7 +88,22 @@ class TelegramService:
     async def download_media(self,peer_id,message_id,destination):
         msg=await self.client.get_messages(self._entity(peer_id),ids=message_id)
         if not msg:raise FileNotFoundError("Telegram mesajı bulunamadı")
-        return await msg.download_media(file=str(destination))
+        if media_metadata(msg) is None:
+            raise ValueError("Mesaj indirilebilir bir dosya veya fotoğraf içermiyor")
+        destination=Path(destination)
+        temporary=None
+        try:
+            # Do not replace an existing file until Telegram has completed the transfer.
+            with tempfile.NamedTemporaryFile(mode="wb",dir=destination.parent,prefix=".acm-",suffix=".part",delete=False) as stream:
+                temporary=Path(stream.name)
+                result=await msg.download_media(file=stream)
+                if result is None:
+                    raise IOError("Telegram dosyayı döndürmedi")
+            os.replace(temporary,destination)
+            return str(destination)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
     async def edit_message(self,peer_id,message_id,text):return await self.client.edit_message(self._entity(peer_id),message_id,text)
     async def delete_message(self,peer_id,message_id,revoke=True):return await self.client.delete_messages(self._entity(peer_id),message_id,revoke=revoke)
     async def search_messages(self,peer_id,query,limit=50):return await self.client.get_messages(self._entity(peer_id),search=query,limit=limit)
@@ -94,9 +112,7 @@ class TelegramService:
         async def on_new_message(event):
             m=event.message; peer_id=utils.get_peer_id(event.message.peer_id); sender=getattr(m,"sender",None)
             name=(" ".join(filter(None,[getattr(sender,"first_name",None),getattr(sender,"last_name",None)])) or getattr(sender,"title",None)) if sender else ("Siz" if m.out else str(m.sender_id or ""))
-            media=None
-            if m.media:
-                f=m.file; media={"name":getattr(f,"name",None) or getattr(f,"ext",None) or "Ek","size":getattr(f,"size",None),"mime_type":getattr(f,"mime_type",None)}
+            media=media_metadata(m)
             row={"peer_id":peer_id,"chat_title":getattr(event.chat,"title",None) or getattr(event.chat,"first_name",None) or name,"message_id":m.id,"sender_id":m.sender_id,"sender_name":name,"text":m.message or "","date":m.date.isoformat() if m.date else None,"outgoing":int(m.out),"media_json":__import__('json').dumps(media,ensure_ascii=False) if media else None,"message":m}
             result=handler(row)
             if hasattr(result,"__await__"):await result
