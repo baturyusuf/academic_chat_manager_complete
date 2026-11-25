@@ -437,3 +437,34 @@ def test_reaction_menu_marks_own_reactions_and_updates_exact_row(tmp_path,monkey
     finally:
         w.telegram=None
         w.close()
+
+def test_edited_indicator_and_live_update_preserve_message_state(tmp_path,monkeypatch):
+    from academic_chat_manager import main
+    app=QApplication.instance() or QApplication([])
+    monkeypatch.setattr(main,"Store",lambda:__import__('academic_chat_manager.storage',fromlist=['Store']).Store(tmp_path/"edits-ui.sqlite3"))
+    main.PREFS.setValue("onboarding/dismissed",True)
+    w=MainWindow()
+    try:
+        original={"peer_id":-17,"message_id":2,"sender_id":1,"sender_name":"Yusuf","text":"İlk metin","date":"2026-11-19T12:00:00+00:00","outgoing":0,"media_json":None,"reactions_json":'[{"emoji":"👍","count":1}]',"reply_json":'{"sender":"Ayşe","text":"Merhaba"}'}
+        w.selected_peer=-17;w.context_mode="chat"
+        w.store.cache_messages([original])
+        w._append_message_bubble(original)
+        item=w.messages.item(0)
+        initial=w.messages.itemWidget(item).footer.text()
+        assert "düzenlendi" not in initial
+        monkeypatch.setattr(w,"_show_local_notification",lambda *args:__import__("pytest").fail("edit must not notify"))
+        edit={"peer_id":-17,"message_id":2,"text":"Yeni metin","media_json":None,"edit_date":"2026-11-19T12:05:00+00:00","edit_hidden":0}
+        w._on_message_edited(edit)
+        row=w.messages.itemWidget(item)
+        assert row.body.text()=="Yeni metin"
+        assert row.footer.text()=="düzenlendi · "+initial
+        assert "Düzenlenme zamanı" in row.footer.toolTip()
+        assert row.reactions_label.text()=="👍 1"
+        assert "Merhaba" in row.reply_quote.text()
+        assert w.messages.count()==1
+        w._on_message_edited({**edit,"text":"Eski","edit_date":"2026-11-19T12:04:00+00:00"})
+        assert w.messages.itemWidget(item).body.text()=="Yeni metin"
+        w._on_message_edited({**edit,"edit_date":"2026-11-19T12:06:00+00:00","edit_hidden":1})
+        assert w.messages.itemWidget(item).footer.text()==initial
+    finally:
+        w.close()
