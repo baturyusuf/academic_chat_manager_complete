@@ -164,6 +164,32 @@ def test_chat_multi_selection_survives_refresh_and_suppresses_history(tmp_path,m
     assert w.context_mode=="selection" and w.messages.count()==0
     w.close()
 
+def test_notifications_are_suppressed_for_visible_app_and_open_chat(tmp_path,monkeypatch):
+    app=QApplication.instance() or QApplication([])
+    from academic_chat_manager import main
+    monkeypatch.setattr(main,"Store",lambda:__import__('academic_chat_manager.storage',fromlist=['Store']).Store(tmp_path/"notification-ui.sqlite3"))
+    main.PREFS.setValue("onboarding/dismissed",True)
+    w=MainWindow();peer=-760
+    w.store.upsert_chats([{"peer_id":peer,"access_hash":1,"title":"Bildirim testi","kind":"Grup","username":None,"can_send":1,"unread_count":0,"last_message":"","last_message_at":None}])
+    calls=[]
+    class Tray:
+        def showMessage(self,*args):calls.append(args)
+    w.tray=Tray()
+    monkeypatch.setattr(w,"_notification_window_is_foreground",lambda:True)
+    w._show_local_notification({"peer_id":peer,"text":"Yeni ileti","outgoing":0})
+    assert calls==[]
+    monkeypatch.setattr(w,"_notification_window_is_foreground",lambda:False)
+    w.context_mode="chat";w.selected_peer=peer
+    w._show_local_notification({"peer_id":peer,"text":"Açık sohbetteki ileti","outgoing":0})
+    w._show_local_notification({"peer_id":peer,"text":"Kendi gönderdiğim ileti","outgoing":1})
+    assert calls==[]
+    w.context_mode="none";w.selected_peer=None
+    times=iter((10.0,11.0));monkeypatch.setattr(main,"monotonic",lambda:next(times))
+    w._show_local_notification({"peer_id":peer,"text":"Arka plandaki ilk ileti","outgoing":0})
+    w._show_local_notification({"peer_id":peer,"text":"Arka plandaki ikinci ileti","outgoing":0})
+    assert len(calls)==1 and w._suppressed_notifications==1
+    w.close()
+
 def test_chat_selection_context_menu_adds_folder_or_starts_bulk(tmp_path,monkeypatch):
     app=QApplication.instance() or QApplication([])
     from academic_chat_manager import main

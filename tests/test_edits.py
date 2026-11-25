@@ -46,3 +46,15 @@ async def test_outgoing_read_updates_are_exposed_as_per_message_receipts(tmp_pat
     assert read_updates==[] and not service.is_message_read(7,49)
     await handler(SimpleNamespace(outbox=True,peer=peer,max_id=49))
     assert read_updates==[(7,49)] and service.is_message_read(7,49) and not service.is_message_read(7,50)
+
+def test_live_update_handlers_are_registered_only_once(tmp_path):
+    class Client:
+        def __init__(self):self.handlers=[]
+        def add_event_handler(self,handler,event):self.handlers.append((handler,event))
+    service=TelegramService(tmp_path/"session-once")
+    service.client=Client()
+    service.start_updates(lambda row:None,lambda row:None,lambda peer_id,max_id:None)
+    first_handlers=list(service.client.handlers)
+    service.start_updates(lambda row:None,lambda row:None,lambda peer_id,max_id:None)
+    assert len(service.client.handlers)==3
+    assert service.client.handlers==first_handlers

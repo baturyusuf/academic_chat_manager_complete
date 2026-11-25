@@ -81,10 +81,10 @@ def next_reactions(message,emoji,limit):
 
 class TelegramService:
     def __init__(self,session_path:Path):
-        self.session_path=Path(session_path); self.client=None; self._code_hash=None; self._phone=None; self._dialogs={}; self._read_outbox_max_ids={}; self.on_message=None
+        self.session_path=Path(session_path); self.client=None; self._code_hash=None; self._phone=None; self._dialogs={}; self._read_outbox_max_ids={}; self._updates_started=False; self.on_message=None
         self._reaction_lock=asyncio.Lock();self._reaction_limit_cache=None
     async def connect(self,api_id:int,api_hash:str):
-        self._reaction_limit_cache=None
+        self._reaction_limit_cache=None;self._updates_started=False
         self.client=TelegramClient(str(self.session_path),api_id,api_hash,connection_retries=5,request_retries=3,auto_reconnect=True,timeout=15)
         await self.client.connect()
         session_file=Path(str(self.session_path)+".session")
@@ -283,6 +283,8 @@ class TelegramService:
     async def search_messages(self,peer_id,query,limit=50):return await self.client.get_messages(self._entity(peer_id),search=query,limit=limit)
     def start_updates(self,handler,edit_handler=None,read_handler=None):
         """Forward Telegram message updates to the UI without changing read state."""
+        if self._updates_started:return
+        self._updates_started=True
         async def on_new_message(event):
             m=event.message; peer_id=utils.get_peer_id(event.message.peer_id); sender=getattr(m,"sender",None)
             name=(" ".join(filter(None,[getattr(sender,"first_name",None),getattr(sender,"last_name",None)])) or getattr(sender,"title",None)) if sender else ("Siz" if m.out else str(m.sender_id or ""))

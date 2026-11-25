@@ -3,6 +3,7 @@ import asyncio, json, mimetypes, os, sys, traceback, uuid
 from pathlib import Path
 from telethon.errors import FloodWaitError
 from functools import lru_cache
+from time import monotonic
 import certifi
 if os.name=="nt" or not os.environ.get("SSL_CERT_FILE") or not Path(os.environ["SSL_CERT_FILE"]).is_file():
     os.environ["SSL_CERT_FILE"]=certifi.where()
@@ -542,7 +543,7 @@ class InviteLinksDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__();self.setWindowTitle("Akademik Sohbet Yöneticisi");self.setWindowIcon(QIcon(str(APP_DIR/"assets"/"app.ico")));self.resize(1550,950);self.setMinimumSize(1050,650);self.setStyleSheet(_theme_stylesheet(False,"#A90025"))
-        self.store=Store();self.telegram=None;self.bulk=None;self.bulk_task=None;self._allow_close=False;self.dialogs={};self._avatar_cache={};self._avatar_loading=set();self._image_preview_cache={};self._image_preview_tasks={};self._preview_scan_queued=False;self.selected_peer=None;self.reply_to=None;self.reply_context=None;self.current_collection=None;self.active_collection_ids=[];self.active_recipient_ids=[];self.context_mode="none";self._chat_open_generation=0;self.active_nav="chats";self.active_kind="Tümü";self.pending_chat_files=[];self._pasted_clipboard_files=set();self._uploading_clipboard_files=set();self._bulk_pasted_files=set();self._build();self._load_settings();self.refresh_chats();self.refresh_tree();self.refresh_history();self._update_pending_files()
+        self.store=Store();self.telegram=None;self.bulk=None;self.bulk_task=None;self._allow_close=False;self.dialogs={};self._avatar_cache={};self._avatar_loading=set();self._image_preview_cache={};self._image_preview_tasks={};self._preview_scan_queued=False;self._last_notification_at=float("-inf");self._suppressed_notifications=0;self.selected_peer=None;self.reply_to=None;self.reply_context=None;self.current_collection=None;self.active_collection_ids=[];self.active_recipient_ids=[];self.context_mode="none";self._chat_open_generation=0;self.active_nav="chats";self.active_kind="Tümü";self.pending_chat_files=[];self._pasted_clipboard_files=set();self._uploading_clipboard_files=set();self._bulk_pasted_files=set();self._build();self._load_settings();self.refresh_chats();self.refresh_tree();self.refresh_history();self._update_pending_files()
         api_hash=security.get_secret("api_hash");api_id=PREFS.value("telegram/api_id","")
         if api_hash and api_id:QTimer.singleShot(300,lambda:asyncio.create_task(self._reconnect()))
         elif not PREFS.value("onboarding/dismissed",False,type=bool):QTimer.singleShot(600,self._first_run_connect)
@@ -1481,11 +1482,23 @@ class MainWindow(QMainWindow):
         dlg=ConnectDialog(self)
         if dlg.exec()==QDialog.Accepted:
             PREFS.setValue("onboarding/dismissed",True)
-            self.telegram=dlg.service
-            if self._connected(dlg.user):asyncio.create_task(self.sync_chats())
-            else:asyncio.create_task(self._discard_new_account_session())
+            asyncio.create_task(self._activate_telegram_service(dlg.service,dlg.user))
+    async def _activate_telegram_service(self,service,user):
+        previous=self.telegram
+        # Invalidate callbacks from the old client before awaiting its shutdown.
+        self.telegram=service
+        if previous and previous is not service:
+            try:await previous.disconnect()
+            except Exception:pass
+        if self._connected(user):await self.sync_chats()
+        else:await self._discard_new_account_session()
     async def _reconnect(self):
         try:
+            previous=self.telegram
+            self.telegram=None
+            if previous:
+                try:await previous.disconnect()
+                except Exception:pass
             api_id=int(PREFS.value("telegram/api_id"));api_hash=security.get_secret("api_hash");self.telegram=TelegramService(app_data_dir()/"telegram_user_session");result=await self.telegram.connect(api_id,api_hash)
             if result.get('authorized'):
                 if self._connected(result['user']):await self.sync_chats()
@@ -1504,14 +1517,20 @@ class MainWindow(QMainWindow):
             self._image_preview_cache.clear()
         if user_id is not None:self.store.set_preference('telegram/user_id',int(user_id))
         name=" ".join(filter(None,[getattr(user,'first_name',None),getattr(user,'last_name',None)])) or getattr(user,'username',None) or "Telegram hesabı";self.account_label.setText(name);self.connection_label.setText("●  Telegram bağlı");self.connection_label.setStyleSheet("color:#18833b;font-weight:600");self.account_status.setText(f"Bağlı hesap: {name}");self.statusBar().showMessage("Telegram hesabı bağlandı")
-        if self.telegram:self.telegram.start_updates(self._on_live_message,self._on_message_edited,self._on_message_read)
+        if self.telegram:
+            service=self.telegram
+            service.start_updates(
+                lambda row,s=service:self._on_live_message(row) if self.telegram is s else None,
+                lambda row,s=service:self._on_message_edited(row) if self.telegram is s else None,
+                lambda peer_id,max_id,s=service:self._on_message_read(peer_id,max_id) if self.telegram is s else None)
         self._schedule_visible_previews()
         return True
     async def _discard_new_account_session(self):
-        if self.telegram:
-            try:await self.telegram.log_out()
-            except Exception:await self.telegram.disconnect()
-        self.telegram=None;self.connection_label.setText("●  Bağlantı yok");self.account_status.setText("Bağlı değil")
+        service=self.telegram;self.telegram=None
+        if service:
+            try:await service.log_out()
+            except Exception:await service.disconnect()
+        self.connection_label.setText("●  Bağlantı yok");self.account_status.setText("Bağlı değil")
     def _on_live_message(self,row):
         self.store.cache_messages([{k:row.get(k) for k in ['peer_id','message_id','sender_id','sender_name','text','date','outgoing','media_json','reactions_json','edit_date','edit_hidden']}])
         if not self.store.chat(row['peer_id']):
@@ -1549,14 +1568,28 @@ class MainWindow(QMainWindow):
     def _show_local_notification(self,row):
         mode=self.notification_mode.currentText() if hasattr(self,"notification_mode") else self.store.preference('notifications/mode','Tüm bildirimler')
         if mode=="Sessiz mod" or (mode=="Yalnızca koleksiyonlar" and not self.store.is_in_any_collection(row['peer_id'])):return
+        if bool(row.get("outgoing")):return
+        if self.context_mode=="chat" and self.selected_peer==row.get("peer_id"):return
+        if self._notification_window_is_foreground():return
         chat=self.store.chat(row['peer_id']);title=(chat or {}).get('title',row.get('chat_title') or 'Telegram sohbet');text=(row['text'] or "Yeni bir medya iletisi") if self.notification_preview.isChecked() else "Yeni Telegram iletisi"
+        now=monotonic()
+        if now-self._last_notification_at<5:
+            self._suppressed_notifications+=1;return
+        if self._suppressed_notifications:text=f"{self._suppressed_notifications+1} yeni mesaj · {text}"
+        self._suppressed_notifications=0;self._last_notification_at=now
         self.tray.showMessage(title,text[:180],QSystemTrayIcon.MessageIcon.Information,5000)
+    def _notification_window_is_foreground(self):
+        if not self.isVisible() or self.isMinimized():return False
+        if QApplication.applicationState()==Qt.ApplicationActive:return True
+        active=QApplication.activeWindow()
+        return self.isActiveWindow() or bool(active and (active is self or self.isAncestorOf(active)))
     async def sync_chats(self):
         try:
             rows=await self.telegram.load_dialogs();self.store.upsert_chats(rows,complete_sync=True);self.dialogs={r['peer_id']:r for r in rows};self.refresh_chats();self.refresh_tree();self.statusBar().showMessage(f"{len(rows)} sohbet eşitlendi",6000)
         except Exception as e:QMessageBox.warning(self,"Senkronizasyon başarısız",str(e))
     async def disconnect_telegram(self):
-        if self.telegram:await self.telegram.disconnect();self.telegram=None
+        service=self.telegram;self.telegram=None
+        if service:await service.disconnect()
         self.connection_label.setText("●  Bağlantı yok");self.account_status.setText("Bağlı değil");self.statusBar().showMessage("Telegram bağlantısı kesildi")
     def logout_telegram(self):
         if QMessageBox.question(self,"Telegram oturumundan çıkış yap","Bu bilgisayardaki Telegram kullanıcı oturumu kapatılacak. Yerel klasörler ve gönderim kayıtları korunur. Devam edilsin mi?",QMessageBox.Yes|QMessageBox.No)==QMessageBox.Yes:asyncio.create_task(self._discard_new_account_session())
