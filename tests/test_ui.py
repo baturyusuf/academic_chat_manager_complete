@@ -195,6 +195,97 @@ def test_notifications_are_suppressed_for_visible_app_and_open_chat(tmp_path,mon
     assert len(calls)==1 and w._suppressed_notifications==1
     w.close()
 
+def test_notification_rules_and_priority_are_saved_and_applied(tmp_path, monkeypatch):
+    from academic_chat_manager import main
+    from academic_chat_manager.storage import Store
+
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(main, "Store", lambda: Store(tmp_path / "notification-settings.sqlite3"))
+    monkeypatch.setattr(main.security, "get_secret", lambda _: None)
+    main.PREFS.setValue("onboarding/dismissed", True)
+    w = MainWindow()
+    w.store.set_preference("telegram/user_id", 9)
+    w.store.upsert_chats([
+        {"peer_id": peer, "title": title, "kind": kind, "access_hash": None, "username": None,
+         "can_send": 1, "unread_count": 0, "last_message": "", "last_message_at": None}
+        for peer, title, kind in [(1, "Ayşe", "Kişi"), (-2, "Ders", "Grup"), (-3, "Bölüm", "Grup"),
+                                  (-4, "Duyurular", "Kanal"), (5, "Asistan", "Bot")]
+    ])
+    calls = []
+    from types import SimpleNamespace
+    w.tray = SimpleNamespace(showMessage=lambda *args: calls.append(args))
+    clock = [10]
+    monkeypatch.setattr(main, "monotonic", lambda: clock[0])
+
+    def choose(combo, value):
+        combo.setCurrentIndex(combo.findData(value))
+
+    def notify(peer, **fields):
+        w._show_local_notification({"peer_id": peer, "text": "Mesaj içeriği", **fields})
+
+    try:
+        w.nav["notifications"].click()
+        assert w.center_stack.currentWidget() is w.notifications_page
+        assert set(w.notification_kind_modes) == {"Kişi", "Grup", "Kanal", "Bot"}
+        choose(w.notification_kind_modes["Grup"], "mentions")
+        choose(w.notification_kind_modes["Bot"], "off")
+        choose(w.notification_kind_modes["Kanal"], "off")
+        w.notification_kind_previews["Grup"].setChecked(False)
+        notify(-2)
+        notify(-4, mentioned=True)
+        notify(5)
+        assert calls == []
+        notify(-2, mentioned=True)
+        assert calls[-1][:2] == ("Ders", "Yeni Telegram iletisi")
+
+        w._open_chat_notification_settings(-3)
+        assert w.notification_chats.currentItem().data(Qt.UserRole) == -3
+        choose(w.notification_chat_rule, "priority")
+        notify(-3)
+        assert [call[0] for call in calls] == ["Ders", "Önemli · Bölüm"]
+        notify(-3)
+        assert len(calls) == 2
+        choose(w.notification_chat_filter, "priority")
+        assert w.notification_chats.count() == 1
+
+        clock[0] += 6
+        w.notification_mode.setCurrentText("Yalnızca önemli sohbetler")
+        notify(1)
+        assert len(calls) == 2
+        w.notification_quiet.setChecked(True)
+        w.notification_quiet_start.setTime(main.QTime(22, 0))
+        w.notification_quiet_end.setTime(main.QTime(8, 0))
+        assert w._in_notification_quiet_hours(main.QTime(23, 0))
+        assert w._in_notification_quiet_hours(main.QTime(7, 0))
+        assert not w._in_notification_quiet_hours(main.QTime(8, 0))
+        monkeypatch.setattr(w, "_in_notification_quiet_hours", lambda _: True)
+        notify(-3)
+        assert len(calls) == 2
+        w.notification_quiet_priority.setChecked(True)
+        notify(-3)
+        assert len(calls) == 3
+        w.notification_mode.setCurrentText("Sessiz mod")
+        clock[0] += 6
+        notify(-3)
+        assert len(calls) == 3
+    finally:
+        w.close()
+
+    reopened = MainWindow()
+    try:
+        reopened._open_chat_notification_settings(-3)
+        assert reopened.notification_chat_rule.currentData() == "priority"
+        assert reopened.notification_kind_modes["Grup"].currentData() == "mentions"
+        assert not reopened.notification_kind_previews["Grup"].isChecked()
+        assert reopened.notification_mode.currentText() == "Sessiz mod"
+        assert reopened.notification_quiet.isChecked() and reopened.notification_quiet_priority.isChecked()
+        assert reopened.notification_quiet_start.time() == main.QTime(22, 0)
+        reopened.store.set_preference("telegram/user_id", 10)
+        reopened._open_chat_notification_settings(-3)
+        assert reopened.notification_chat_rule.currentData() == "default"
+    finally:
+        reopened.close()
+
 def test_chat_selection_context_menu_adds_folder_or_starts_bulk(tmp_path,monkeypatch):
     app=QApplication.instance() or QApplication([])
     from academic_chat_manager import main

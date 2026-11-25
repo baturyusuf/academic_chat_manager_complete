@@ -58,3 +58,20 @@ def test_live_update_handlers_are_registered_only_once(tmp_path):
     service.start_updates(lambda row:None,lambda row:None,lambda peer_id,max_id:None)
     assert len(service.client.handlers)==3
     assert service.client.handlers==first_handlers
+
+
+@pytest.mark.asyncio
+async def test_new_message_supplies_chat_type_and_telegram_mention(tmp_path):
+    service = TelegramService(tmp_path / "notification-session")
+    handlers = {}
+    service.client = SimpleNamespace(
+        add_event_handler=lambda handler, event: handlers.update({type(event): handler}))
+    messages = []
+    service.start_updates(messages.append)
+    channel = types.Channel(id=7, title="Duyurular", photo=types.ChatPhotoEmpty(),
+                            date=datetime.now(timezone.utc), broadcast=True)
+    message = SimpleNamespace(id=42, peer_id=types.PeerChannel(7), sender_id=None, out=False,
+                              message="Duyuru", date=None, media=None, reactions=None, mentioned=True)
+    await handlers[events.NewMessage](SimpleNamespace(message=message, chat=channel))
+    assert messages[0]["chat_kind"] == "Kanal"
+    assert messages[0]["mentioned"] is True

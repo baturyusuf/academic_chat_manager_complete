@@ -102,14 +102,20 @@ class TelegramService:
             return {"authorized":True,"user":user}
         except errors.SessionPasswordNeededError:return {"authorized":False,"needs_password":True}
     async def request_sign_in_code(self,phone,code):return await self.sign_in(phone,code)
+    @staticmethod
+    def _chat_kind(entity):
+        if isinstance(entity, (types.User, types.UserEmpty)):
+            return "Bot" if getattr(entity, "bot", False) else "Kişi"
+        if isinstance(entity, types.Channel):
+            return "Kanal" if getattr(entity, "broadcast", False) else "Grup"
+        return "Grup"
+
     async def load_dialogs(self):
         dialogs=await self.client.get_dialogs(limit=None)
         result=[]
         for d in dialogs:
             ent=d.entity; peer_id=utils.get_peer_id(ent); access_hash=getattr(ent,"access_hash",None)
-            if isinstance(ent,(types.User,types.UserEmpty)):kind="Bot" if getattr(ent,"bot",False) else "Kişi"
-            elif isinstance(ent,types.Channel):kind="Kanal" if getattr(ent,"broadcast",False) else "Grup"
-            else:kind="Grup"
+            kind=self._chat_kind(ent)
             can_send=not getattr(ent,"restricted",False) and not getattr(ent,"left",False) and not (isinstance(ent,types.Channel) and getattr(ent,"broadcast",False) and not (getattr(ent,"creator",False) or getattr(getattr(ent,"admin_rights",None),"post_messages",False)))
             msg=d.message
             outgoing=bool(getattr(msg,"out",False));read_max=int(getattr(d.dialog,"read_outbox_max_id",0) or 0)
@@ -290,6 +296,9 @@ class TelegramService:
             name=(" ".join(filter(None,[getattr(sender,"first_name",None),getattr(sender,"last_name",None)])) or getattr(sender,"title",None)) if sender else ("Siz" if m.out else str(m.sender_id or ""))
             media=media_metadata(m)
             row={"peer_id":peer_id,"chat_title":getattr(event.chat,"title",None) or getattr(event.chat,"first_name",None) or name,"message_id":m.id,"sender_id":m.sender_id,"sender_name":name,"text":m.message or "","date":m.date.isoformat() if m.date else None,"outgoing":int(m.out),"read":int(bool(m.out and self.is_message_read(peer_id,m.id))),"media_json":__import__('json').dumps(media,ensure_ascii=False) if media else None,"reactions_json":__import__('json').dumps(reaction_rows(m),ensure_ascii=False),**edit_metadata(m),"message":m}
+            entity = event.chat or self._dialogs.get(peer_id)
+            row["chat_kind"] = self._chat_kind(entity) if entity is not None else None
+            row["mentioned"] = bool(getattr(m, "mentioned", False))
             result=handler(row)
             if hasattr(result,"__await__"):await result
         self.client.add_event_handler(on_new_message,events.NewMessage())

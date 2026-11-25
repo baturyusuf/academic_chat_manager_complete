@@ -9,7 +9,7 @@ import certifi
 if os.name=="nt" or not os.environ.get("SSL_CERT_FILE") or not Path(os.environ["SSL_CERT_FILE"]).is_file():
     os.environ["SSL_CERT_FILE"]=certifi.where()
 from datetime import datetime, timezone
-from PySide6.QtCore import Qt, QSettings, QSize, QRect, Signal, QMimeData, QTimer, QItemSelectionModel, QByteArray, QEvent, QPoint
+from PySide6.QtCore import Qt, QSettings, QSize, QRect, Signal, QMimeData, QTimer, QItemSelectionModel, QByteArray, QEvent, QPoint, QTime, QSignalBlocker
 from PySide6.QtGui import QAction, QFont, QImageReader, QPixmap, QColor, QDrag, QIcon, QPalette, QKeySequence, QShortcut, QPainter, QPainterPath
 from PySide6.QtWidgets import *
 from PySide6.QtSvg import QSvgRenderer
@@ -32,6 +32,18 @@ PREFS=QSettings("RumeliAcademic","AcademicChatManager")
 TREE_NODE_KIND_ROLE=Qt.UserRole+1
 TREE_OWNER_COLLECTION_ROLE=Qt.UserRole+2
 TREE_ICON_ROLE=Qt.UserRole+3
+NOTIFICATION_KINDS = {"Kişi": "Kişiler", "Grup": "Gruplar", "Kanal": "Kanallar", "Bot": "Botlar"}
+NOTIFICATION_RULES = {
+    "default": "Tür ayarını kullan",
+    "all": "Tüm mesajlar",
+    "mentions": "Yalnızca benden bahsedilince",
+    "priority": "Önemli bildirim",
+    "off": "Sessiz",
+}
+NOTIFICATION_SCOPES = (
+    "Tüm bildirimler", "Yalnızca koleksiyonlar", "Yalnızca önemli sohbetler", "Sessiz mod",
+)
+MENTION_KINDS = ("Grup", "Kanal")
 COLLECTION_ICON_OPTIONS="""📁 📂 🗂️ 🗃️ 🗄️ 📌 📍 🏷️ 🎓 🏫 📚 📖 📝 ✏️ 📎 📋 💼 🧑‍🏫 👨‍🏫 👩‍🏫 👨‍🎓 👩‍🎓 🧑‍🎓 🧠 💻 🖥️ ⌨️ 🖱️ 📱 🌐 🔬 🧪 🧬 🧫 🩺 💊 🏥 ⚙️ 🔧 🛠️ 🧰 🧮 📊 📈 📉 🗓️ 📅 ⏰ ⏳ ✅ ☑️ ✔️ ❌ ❗ ❓ ⚠️ ⭐ 🌟 ✨ 🔥 💡 🎯 🏆 🥇 🏅 🎨 🎭 🎵 🎼 🎬 📷 🖼️ 🎥 🎤 🎧 🎹 🎸 ⚽ 🏀 🏐 🎾 🏓 🏸 🏊 🏃 🚴 🧘 🍎 🍕 ☕ 🍰 🌱 🌳 🌻 🌍 🌈 ☀️ 🌙 ⛅ ❄️ ❤️ 💙 💚 💛 💜 🤍 🖤 👥 👤 🧑‍🤝‍🧑 👪 🏠 🏢 🏛️ 🚀 ✈️ 🚗 🚆 💰 💳 🛒 🎁 🧳 🔑 🔒 🔔 📣 📢 💬 📨 📩 ✉️""".split()
 COLLECTION_ICON_OPTIONS += """🗒️ 📃 📄 📑 🧾 🗞️ 📇 📈 📉 📊 🗃️ 📁 📂 🗂️ 🗄️ 🗑️ 🔖 🏷️ 🔗 🧷 🧵 🪡 🧶 🪢 🪣 🧹 🧺 🪟 🪞 🛋️ 🛏️ 🪑 🚪 🪜 🧯 🛒 🧰 🪛 🪚 🔨 ⚒️ ⚙️ 🪤 🧲 🪝 🧪 🧫 🧬 🔭 🔬 🩻 🩹 🩺 🧴 🧼 🪥 🧽 🧹 🧻 🛟 🧑‍🔬 👩‍🔬 👨‍🔬 🧑‍💻 👩‍💻 👨‍💻 🧑‍🏫 👩‍🏫 👨‍🏫 🧑‍🎓 👩‍🎓 👨‍🎓 🧑‍⚕️ 👩‍⚕️ 👨‍⚕️ 🧑‍🚀 👩‍🚀 👨‍🚀 🧑‍⚖️ 👩‍⚖️ 👨‍⚖️ 🧑‍🔧 👩‍🔧 👨‍🔧 🧑‍🍳 👩‍🍳 👨‍🍳 🧑‍🎨 👩‍🎨 👨‍🎨 🧑‍🚒 👩‍🚒 👨‍🚒 🧑‍✈️ 👩‍✈️ 👨‍✈️ 👥 🫂 🗣️ 👤 👪 🧑‍🤝‍🧑 👭 👫 👬 🧑‍🧑‍🧒‍🧒 🏛️ 🏢 🏫 🏥 🏦 🏭 🏬 🏟️ 🏖️ 🏕️ 🏠 🏡 🏘️ 🏚️ 🏗️ ⛪ 🕌 🛕 🕍 ⛩️ 🕋 🎓 🎒 🧳 🌍 🌎 🌏 🗺️ 🧭 🧱 🛣️ 🚦 🚥 🛤️ 🚉 🚇 🚊 🚍 🚘 🚲 🛴 🛵 🚗 🚕 🚙 🚌 🚎 🚐 🚑 🚒 🚓 🚔 🚚 🚛 🚜 🚄 🚅 🚆 🚇 🚈 🚉 ✈️ 🛫 🛬 🚀 🛸 🛰️ ⛵ 🚤 🛥️ 🚢 ⚓ 🌐 🕸️ 📡 🛜 🔋 🔌 🪫 💻 🖥️ 🖨️ ⌨️ 🖱️ 🖲️ 💽 💾 💿 📀 📼 📱 📲 ☎️ 📞 📟 📠 🔍 🔎 💡 🔦 🕯️ 🪔 🧯 🛢️ 💸 💵 💴 💶 💷 💰 🪙 💳 🧮 📉 📈 📊 🧾 ⚖️ 🪙 🏆 🏅 🥇 🥈 🥉 🎖️ 🏵️ 🎗️ 🎟️ 🎫 🎪 🎭 🩰 🎨 🖌️ 🖍️ 🧵 🪡 🎼 🎵 🎶 🎤 🎧 🎹 🥁 🎷 🎺 🎸 🪕 🎻 🎬 🎥 📽️ 🎞️ 📸 📷 📹 📺 📻 🎙️ 🎚️ 🎛️ 🧩 ♟️ 🎯 🎮 🕹️ 🎲 🃏 🀄 🧸 🪅 🪩 🎉 🎊 🎈 🎁 🎀 🪄 🪅 🧿 💎 🪬 🛡️ ⚔️ 🔮 🪄 🪷 🌸 🌼 🌻 🌷 🪻 🌱 🪴 🌲 🌳 🌴 🌵 🍀 ☘️ 🍁 🍂 🍃 🌾 🌿 🪹 🪺 🪨 🌊 🔥 💧 ☔ 🌈 ☀️ 🌤️ ⛅ 🌥️ ☁️ 🌦️ 🌧️ ⛈️ 🌩️ 🌨️ ❄️ ☃️ ⛄ 🌬️ 🌪️ 🌫️ 🌙 🌛 🌜 🌝 🌚 ⭐ 🌟 ✨ 💫 🌠 🌌 🪐 🌍 🌎 🌏 🌑 🌒 🌓 🌔 🌕 🌖 🌗 🌘 🍎 🍏 🍐 🍊 🍋 🍌 🍉 🍇 🍓 🫐 🍈 🍒 🍑 🥭 🍍 🥥 🥝 🍅 🥑 🥦 🥬 🥒 🌶️ 🫑 🌽 🥕 🫒 🧄 🧅 🥔 🍠 🥐 🥯 🍞 🥖 🧀 🥚 🍳 🥞 🧇 🥓 🥩 🍗 🍖 🌭 🍔 🍟 🍕 🫓 🥪 🥙 🧆 🌮 🌯 🫔 🥗 🥘 🫕 🍝 🍜 🍲 🍛 🍣 🍱 🥟 🦪 🍤 🍙 🍚 🍘 🍥 🥠 🥮 🍢 🍡 🍧 🍨 🍦 🥧 🧁 🍰 🎂 🍮 🍭 🍬 🍫 🍿 🍩 🍪 🌰 🥜 🫘 🍯 🥛 🍼 ☕ 🫖 🍵 🧃 🥤 🧋 🍶 🍺 🍻 🥂 🍷 🥃 🍸 🍹 🧉 🍾 😃 😄 😁 😆 😅 😂 🤣 🥲 🥹 ☺️ 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😜 🤪 😝 🤑 🤗 🤭 🫢 🫣 🤫 🤔 🫡 🤐 🤨 😐 😑 😶 🫥 😏 😒 🙄 😬 🤥 😌 😔 😪 🤤 😴 😷 🤒 🤕 🤢 🤮 🤧 🥵 🥶 🥴 😵 🤯 🤠 🥳 🥸 😎 🤓 🧐 😕 🫤 😟 🙁 ☹️ 😮 😯 😲 😳 🥺 🥹 😦 😧 😨 😰 😥 😢 😭 😱 😖 😣 😞 😓 😩 😫 🥱 😤 😡 😠 🤬 😈 👿 💀 ☠️ 💩 🤡 👻 👽 👾 🤖 🎃 😺 😸 😹 😻 😼 😽 🙀 😿 😾 🙈 🙉 🙊 💌 💘 💝 💖 💗 💓 💞 💕 💟 ❣️ 💔 ❤️‍🔥 ❤️‍🩹 ❤️ 🩷 🧡 💛 💚 💙 🩵 💜 🤎 🖤 🩶 🤍 💯 💢 💥 💫 💦 💨 🕳️ 💬 👁️‍🗨️ 🗨️ 🗯️ 💭 💤 👋 🤚 🖐️ ✋ 🖖 🫱 🫲 🫳 🫴 🫰 🫵 🫶 🤌 🤏 ✌️ 🤞 🫰 🤟 🤘 🤙 👈 👉 👆 🖕 👇 ☝️ 👍 👎 ✊ 👊 🤛 🤜 👏 🙌 🫶 👐 🤲 🤝 🙏 ✍️ 💅 🤳 💪 🦾 🦿 🦵 🦶 👂 🦻 👃 🧠 🫀 🫁 🦷 🦴 👀 👁️ 👅 👄 🫦 🐶 🐱 🐭 🐹 🐰 🦊 🐻 🐼 🐻‍❄️ 🐨 🐯 🦁 🐮 🐷 🐸 🐵 🐔 🐧 🐦 🐤 🦆 🦅 🦉 🦇 🐺 🐗 🐴 🦄 🐝 🪱 🐛 🦋 🐌 🐞 🐜 🪰 🪲 🪳 🦟 🦗 🕷️ 🦂 🐢 🐍 🦎 🦖 🦕 🐙 🦑 🦐 🦞 🦀 🐡 🐠 🐟 🐬 🐳 🦈 🐊 🐅 🐆 🦓 🦍 🦧 🐘 🦛 🦏 🐪 🐫 🦒 🦘 🦬 🐃 🐂 🐄 🐎 🐖 🐏 🐑 🦙 🐐 🦌 🐕 🦮 🐕‍🦺 🐩 🐈 🐈‍⬛ 🪶 🐓 🦃 🦤 🦚 🦜 🪽 🐇 🦝 🦨 🦡 🦫 🦦 🦥 🐁 🐀 🐿️ 🦔 🐾 🐉 🐲 🌵 🎄 🌲 🌳 🌴 🪵 🌱 🌿 ☘️ 🍀 🎍 🪴 🎋 🍃 🍂 🍁 🪺 🪻 🥀 🌺 🌸 🌼 🌷 🪷 🌹 🪸 🪷 🏵️""".split()
 COLLECTION_ICON_OPTIONS=list(dict.fromkeys(COLLECTION_ICON_OPTIONS))
@@ -47,6 +59,7 @@ _ICON_PATHS = {
     "bulk": "M3 4L21 12L3 20L7 12L3 4ZM7 12H21",
     "history": "M12 3A9 9 0 1 1 3 12A9 9 0 0 1 12 3ZM12 7V12L16 15",
     "filters": "M3 4H21L14 12V19L10 21V12Z",
+    "notifications": "M5 17H19L17 14V9A5 5 0 0 0 7 9V14ZM10 21H14",
     "settings": "M4 6H20M4 12H20M4 18H20M8 3V9M16 9V15M10 15V21",
     "plus": "M12 4V20M4 12H20",
     "up": "M12 20V4M5 11L12 4L19 11",
@@ -581,7 +594,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__();self.setWindowTitle("Akademik Sohbet Yöneticisi");self.setWindowIcon(QIcon(str(APP_DIR/"assets"/"app.ico")));self.resize(1550,950);self.setMinimumSize(1050,650);self.setStyleSheet(_theme_stylesheet(False,"#A90025"))
         self._fullscreen_preview = None
-        self.store=Store();self.telegram=None;self.bulk=None;self.bulk_task=None;self._allow_close=False;self.dialogs={};self._avatar_cache={};self._avatar_loading=set();self._image_preview_cache={};self._image_preview_tasks={};self._preview_scan_queued=False;self._last_notification_at=float("-inf");self._suppressed_notifications=0;self.selected_peer=None;self.reply_to=None;self.reply_context=None;self.current_collection=None;self.active_collection_ids=[];self.active_recipient_ids=[];self.context_mode="none";self._chat_open_generation=0;self.active_nav="chats";self.active_kind="Tümü";self.pending_chat_files=[];self._pasted_clipboard_files=set();self._uploading_clipboard_files=set();self._bulk_pasted_files=set();self._build();self._load_settings();self.refresh_chats();self.refresh_tree();self.refresh_history();self._update_pending_files()
+        self.store=Store();self.telegram=None;self.bulk=None;self.bulk_task=None;self._allow_close=False;self.dialogs={};self._avatar_cache={};self._avatar_loading=set();self._image_preview_cache={};self._image_preview_tasks={};self._preview_scan_queued=False;self._last_notification_at=float("-inf");self._suppressed_notifications=0;self._last_priority_notification_at=float("-inf");self._suppressed_priority_notifications=0;self.selected_peer=None;self.reply_to=None;self.reply_context=None;self.current_collection=None;self.active_collection_ids=[];self.active_recipient_ids=[];self.context_mode="none";self._chat_open_generation=0;self.active_nav="chats";self.active_kind="Tümü";self.pending_chat_files=[];self._pasted_clipboard_files=set();self._uploading_clipboard_files=set();self._bulk_pasted_files=set();self._build();self._load_settings();self.refresh_chats();self.refresh_tree();self.refresh_history();self._update_pending_files()
         api_hash=security.get_secret("api_hash");api_id=PREFS.value("telegram/api_id","")
         if api_hash and api_id:QTimer.singleShot(300,lambda:asyncio.create_task(self._reconnect()))
         elif not PREFS.value("onboarding/dismissed",False,type=bool):QTimer.singleShot(600,self._first_run_connect)
@@ -606,7 +619,7 @@ class MainWindow(QMainWindow):
         f=QFrame(objectName="sidebar");f.setMinimumWidth(150);f.setMaximumWidth(360);v=QVBoxLayout(f);v.setContentsMargins(9,10,9,8)
         brand=QHBoxLayout();logo=QLabel();pix=QPixmap(str(APP_DIR/"assets"/"app.ico"));logo.setPixmap(pix.scaled(30,30,Qt.KeepAspectRatio,Qt.SmoothTransformation));brand.addWidget(logo);brand.addWidget(QLabel("Akademik Sohbet Yöneticisi",objectName="brandTitle"),1);v.addLayout(brand)
         self.nav={}
-        for text,key in [("Sohbetler","chats"),("Klasörler","folders"),("Toplu Mesajlaşma","bulk"),("Gönderim Geçmişi","history"),("Filtreler","filters"),("Ayarlar","settings")]:
+        for text,key in [("Sohbetler","chats"),("Klasörler","folders"),("Toplu Mesajlaşma","bulk"),("Gönderim Geçmişi","history"),("Filtreler","filters"),("Bildirimler","notifications"),("Ayarlar","settings")]:
             b=_icon_button(key,text);b.setMinimumHeight(39);b.setStyleSheet("text-align:left;padding:8px 7px");b.clicked.connect(lambda _,k=key:self.navigate(k));self.nav[key]=b;v.addWidget(b)
         v.addStretch();self.credit=QLabel("Arş. Gör. Muhammed Yusuf Batur tarafından geliştirilmiştir.");self.credit.setWordWrap(True);self.credit.setStyleSheet("color:#9298a7;padding:5px 4px");v.addWidget(self.credit);self._mark_nav("chats");return f
     def _center_panel(self):
@@ -619,8 +632,8 @@ class MainWindow(QMainWindow):
             b=QPushButton(label);b.setCheckable(True);b.setChecked(label=="Tümü");b.clicked.connect(lambda _,x=label:self.set_filter(x));chips.addWidget(b);self.filters[label]=b
         cv.addLayout(chips);self.chat_list=DraggableChatList();self.chat_list.setIconSize(QSize(40,40));self.chat_list.setWordWrap(True);self.chat_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff);self.chat_list.setSelectionBehavior(QAbstractItemView.SelectRows);self.chat_list.itemSelectionChanged.connect(self._chat_selected);self.chat_list.setContextMenuPolicy(Qt.CustomContextMenu);self.chat_list.customContextMenuRequested.connect(self._chat_menu);self.chat_list.verticalScrollBar().valueChanged.connect(lambda *_:self._queue_visible_avatars());cv.addWidget(self.chat_list,1);self.tabs.addTab(cp,"Sohbetler")
         fp=QWidget();fv=QVBoxLayout(fp);fv.setContentsMargins(3,8,3,2);fh=QHBoxLayout();fh.addWidget(QLabel("Klasörler",objectName="sectionTitle"));fh.addStretch();self.add_collection_btn=_icon_button("plus","Yeni klasör");self.add_collection_btn.clicked.connect(self.create_collection);fh.addWidget(self.add_collection_btn);fv.addLayout(fh);self.collection_search=QLineEdit();self.collection_search.setPlaceholderText("Klasörlerde ara…");self.collection_search.textChanged.connect(lambda _:self.refresh_tree());fv.addWidget(self.collection_search);self.tree=CollectionTree();self.tree.itemClicked.connect(self._collection_selected);self.tree.itemDoubleClicked.connect(self._collection_selected);self.tree.setContextMenuPolicy(Qt.CustomContextMenu);self.tree.customContextMenuRequested.connect(self._collection_menu);self.tree.chatsDropped.connect(self._dropped_chats);fv.addWidget(self.tree,1);self.tabs.addTab(fp,"Klasörler");self.tabs.currentChanged.connect(lambda i:self.navigate("chats" if i==0 else "folders"));self.center_stack.addWidget(p)
-        self.settings_page=self._settings_page();self.history_page=self._history_page();self.filters_page=self._filters_page();self.bulk_page=self._bulk_page()
-        for page in [self.settings_page,self.history_page,self.filters_page,self.bulk_page]:self.center_stack.addWidget(page)
+        self.settings_page=self._settings_page();self.history_page=self._history_page();self.filters_page=self._filters_page();self.bulk_page=self._bulk_page();self.notifications_page=self._notifications_page()
+        for page in [self.settings_page,self.history_page,self.filters_page,self.bulk_page,self.notifications_page]:self.center_stack.addWidget(page)
         return f
     def _conversation_panel(self):
         self.conversation=QFrame(objectName="conversation");self.conversation.setMinimumWidth(360);v=QVBoxLayout(self.conversation);v.setContentsMargins(0,0,0,0);v.setSpacing(0);head=QFrame(objectName="chatHeader");h=QHBoxLayout(head);h.setContentsMargins(15,10,15,10);self.chat_avatar=QLabel();self.chat_avatar.setFixedSize(42,42);h.addWidget(self.chat_avatar);hv=QVBoxLayout();self.chat_title=QLabel("Sohbet seçin",objectName="sectionTitle");self.chat_meta=QLabel("Telegram mesajları burada yüklenecek",objectName="muted");hv.addWidget(self.chat_title);hv.addWidget(self.chat_meta);h.addLayout(hv);h.addStretch();self.message_search=QLineEdit();self.message_search.setPlaceholderText("Bu sohbette ara");self.message_search.setMaximumWidth(250);self.message_search.returnPressed.connect(self.search_messages);h.addWidget(self.message_search);v.addWidget(head)
@@ -633,7 +646,7 @@ class MainWindow(QMainWindow):
         self.history=QTableWidget(0,7);self.history.setHorizontalHeaderLabels(["Tarih","Koleksiyon","Durum","Başarılı","Toplam","Mesaj","Ekler"]);header=self.history.horizontalHeader();header.setSectionResizeMode(QHeaderView.Interactive);header.setStretchLastSection(False);header.setMinimumSectionSize(90);self.history.setColumnWidth(0,170);self.history.setColumnWidth(1,260);self.history.setColumnWidth(2,110);self.history.setColumnWidth(3,90);self.history.setColumnWidth(4,90);self.history.setColumnWidth(5,320);self.history.setColumnWidth(6,200);self.history.setSortingEnabled(True);self.history.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded);self.history.setSelectionBehavior(QAbstractItemView.SelectRows);v.addWidget(self.history,1)
         self.target_detail=QListWidget();self.target_detail.setMaximumHeight(200);self.target_detail.setSelectionMode(QAbstractItemView.SingleSelection);v.addWidget(QLabel("Alıcı sonuçları"));v.addWidget(self.target_detail);self.cancel_history_target_btn=QPushButton("Seçili bekleyen alıcıyı iptal et");self.cancel_history_target_btn.clicked.connect(self.cancel_selected_history_target);v.addWidget(self.cancel_history_target_btn);self.history_download_btn=QPushButton("Gönderilen dosyayı indir…");self.history_download_btn.setEnabled(False);self.history_download_btn.clicked.connect(self._download_history_attachment);v.addWidget(self.history_download_btn);self.history.itemSelectionChanged.connect(self._history_selected);return p
     def _filters_page(self):
-        p=QWidget();v=QVBoxLayout(p);v.addWidget(QLabel("Filtreler ve görünürlük",objectName="sectionTitle"));self.visible_mode=QComboBox();self.visible_mode.addItems(["Tüm sohbetler","Yalnızca gruplar","Yalnızca kişiler","Yalnızca koleksiyonlardakiler","Gizlenen sohbetleri yönet"]);self.visible_mode.currentTextChanged.connect(self.refresh_chats);v.addWidget(QLabel("Sohbet görünümü"));v.addWidget(self.visible_mode);self.notification_mode=QComboBox();self.notification_mode.addItems(["Tüm bildirimler","Yalnızca koleksiyonlar","Sessiz mod"]);self.notification_mode.currentTextChanged.connect(lambda x:self.store.set_preference("notifications/mode",x));v.addWidget(QLabel("Uygulama bildirim modu"));v.addWidget(self.notification_mode);self.notification_preview=QCheckBox("Bildirimlerde ileti metnini göster");self.notification_preview.setChecked(True);self.notification_preview.toggled.connect(lambda x:self.store.set_preference("notifications/preview",x));v.addWidget(self.notification_preview);self.visibility_list=QListWidget();self.visibility_list.setSelectionMode(QAbstractItemView.ExtendedSelection);v.addWidget(QLabel("Sohbetler · çoklu seçim yapabilirsiniz"));v.addWidget(self.visibility_list,1);row=QHBoxLayout();hide=_icon_button("eye-off","Seçilileri gizle");unhide=_icon_button("eye","Gizlemeyi kaldır");hide.clicked.connect(lambda:self._set_hidden_ids([i.data(Qt.UserRole) for i in self.visibility_list.selectedItems()],True));unhide.clicked.connect(lambda:self._unhide_selected());row.addWidget(hide);row.addWidget(unhide);v.addLayout(row);return p
+        p=QWidget();v=QVBoxLayout(p);v.addWidget(QLabel("Filtreler ve görünürlük",objectName="sectionTitle"));self.visible_mode=QComboBox();self.visible_mode.addItems(["Tüm sohbetler","Yalnızca gruplar","Yalnızca kişiler","Yalnızca koleksiyonlardakiler","Gizlenen sohbetleri yönet"]);self.visible_mode.currentTextChanged.connect(self.refresh_chats);v.addWidget(QLabel("Sohbet görünümü"));v.addWidget(self.visible_mode);self.visibility_list=QListWidget();self.visibility_list.setSelectionMode(QAbstractItemView.ExtendedSelection);v.addWidget(QLabel("Sohbetler · çoklu seçim yapabilirsiniz"));v.addWidget(self.visibility_list,1);row=QHBoxLayout();hide=_icon_button("eye-off","Seçilileri gizle");unhide=_icon_button("eye","Gizlemeyi kaldır");hide.clicked.connect(lambda:self._set_hidden_ids([i.data(Qt.UserRole) for i in self.visibility_list.selectedItems()],True));unhide.clicked.connect(lambda:self._unhide_selected());row.addWidget(hide);row.addWidget(unhide);v.addLayout(row);return p
     def _bulk_page(self):
         p=QWidget();v=QVBoxLayout(p);v.addWidget(QLabel("Toplu mesajlaşma",objectName="sectionTitle"));v.addWidget(QLabel("Bir koleksiyon seçip alıcıları inceleyin. Mesajlar yalnızca her bir sohbet için gönderim onayından sonra gönderilir."));self.bulk_collection_combo=QComboBox();self.bulk_collection_combo.currentIndexChanged.connect(self._bulk_collection_changed);v.addWidget(self.bulk_collection_combo);self.bulk_recipients=QListWidget();v.addWidget(self.bulk_recipients,1);b=QPushButton("Mesaj ve dosya gönder…");b.setObjectName("primary");b.clicked.connect(self.start_bulk);v.addWidget(b);self.cancel_job_btn=QPushButton("Bekleyen işleri iptal et");self.cancel_job_btn.clicked.connect(self.cancel_bulk);v.addWidget(self.cancel_job_btn);return p
     def _settings_page(self):
@@ -642,6 +655,207 @@ class MainWindow(QMainWindow):
         background=QGroupBox("Sohbet arka planı");bl=QHBoxLayout(background);self.bg_path=QLineEdit();self.bg_path.setReadOnly(True);self.bg_path.setPlaceholderText("Görsel seçilmedi");pick=_icon_button("image","Görsel seç…");pick.clicked.connect(self.choose_background);self.bg_color_btn=QPushButton("Düz renk seç…");self.bg_color_btn.clicked.connect(self.choose_background_color);clear=QPushButton("Varsayılana dön");clear.clicked.connect(self.clear_background);bl.addWidget(self.bg_path,1);bl.addWidget(pick);bl.addWidget(self.bg_color_btn);bl.addWidget(clear);v.addWidget(background)
         account=QGroupBox("Telegram hesabı");al=QVBoxLayout(account);self.account_status=QLabel("Bağlı değil");al.addWidget(self.account_status);ar=QHBoxLayout();connect=QPushButton("Hesabı bağla / değiştir");connect.setObjectName("primary");connect.clicked.connect(self.connect_telegram);disconnect=QPushButton("Bağlantıyı kes");disconnect.clicked.connect(lambda:asyncio.create_task(self.disconnect_telegram()));sync=_icon_button("refresh","Sohbetleri eşitle");sync.clicked.connect(lambda:asyncio.create_task(self.sync_chats()));logout=QPushButton("Telegram oturumundan çıkış yap");logout.clicked.connect(self.logout_telegram);ar.addWidget(connect);ar.addWidget(disconnect);ar.addWidget(sync);al.addLayout(ar);al.addWidget(logout);secure=QLabel("API Hash, işletim sisteminin kimlik bilgisi kasasında saklanır. Telegram oturumu kullanıcı uygulama verileri klasöründedir.");secure.setWordWrap(True);secure.setObjectName("muted");al.addWidget(secure);v.addWidget(account)
         options=QGroupBox("Görünürlük");ol=QVBoxLayout(options);self.credit_check=QCheckBox("Küçük geliştirici bilgisini göster");self.credit_check.setChecked(True);self.credit_check.toggled.connect(self.credit.setVisible);ol.addWidget(self.credit_check);self.confirm_send=QCheckBox("Toplu gönderim öncesi alıcı onayını zorunlu tut");self.confirm_send.setChecked(True);ol.addWidget(self.confirm_send);v.addWidget(options);v.addStretch();p.setWidget(inner);return p
+    def _notifications_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.addWidget(QLabel("Bildirimler", objectName="sectionTitle"))
+
+        def note(text, parent_layout):
+            label = QLabel(text, objectName="muted")
+            label.setWordWrap(True)
+            parent_layout.addWidget(label)
+
+        tabs = QTabWidget()
+        layout.addWidget(tabs, 1)
+        general = QScrollArea()
+        general.setWidgetResizable(True)
+        general.setFrameShape(QFrame.NoFrame)
+        body = QWidget()
+        general.setWidget(body)
+        options = QVBoxLayout(body)
+        tabs.addTab(general, "Genel")
+        scope_box = QGroupBox("Masaüstü bildirimleri")
+        scope_form = QFormLayout(scope_box)
+        self.notification_mode = QComboBox()
+        self.notification_mode.addItems(NOTIFICATION_SCOPES)
+        self.notification_mode.setCurrentText(self.store.preference("notifications/mode", NOTIFICATION_SCOPES[0]))
+        self.notification_mode.currentTextChanged.connect(
+            lambda value: self.store.set_preference("notifications/mode", value))
+        scope_form.addRow("Kapsam", self.notification_mode)
+        self.notification_preview = QCheckBox("Bildirimlerde mesaj metnini göster")
+        self.notification_preview.setChecked(self.store.preference("notifications/preview", True))
+        self.notification_preview.toggled.connect(
+            lambda value: self.store.set_preference("notifications/preview", value))
+        scope_form.addRow(self.notification_preview)
+        note("Bu ayarlar bu bilgisayardaki uygulamaya uygulanır. "
+             "Masaüstü bildirimleri pencere gizliyken veya küçültülmüşken gösterilir.", scope_form)
+        note("Mesaj metni burada kapatılırsa tüm sohbet türlerinde gizlenir.", scope_form)
+        options.addWidget(scope_box)
+
+        kinds_box = QGroupBox("Sohbet türüne göre varsayılanlar")
+        kinds_form = QFormLayout(kinds_box)
+        self.notification_kind_modes = {}
+        self.notification_kind_previews = {}
+        for kind, label in NOTIFICATION_KINDS.items():
+            rule_key = f"notifications/kind/{kind}"
+            preview_key = f"notifications/preview/{kind}"
+            choices = ("all", "mentions", "off") if kind in MENTION_KINDS else ("all", "off")
+            combo = self._notification_rule_combo(choices)
+            combo.setCurrentIndex(max(0, combo.findData(self.store.preference(rule_key, "all"))))
+            combo.currentIndexChanged.connect(
+                lambda _, widget=combo, key=rule_key: self.store.set_preference(key, widget.currentData()))
+            self.notification_kind_modes[kind] = combo
+            preview = QCheckBox("Mesaj metnini göster")
+            preview.setAccessibleName(f"{label} · Mesaj metnini göster")
+            preview.setChecked(self.store.preference(preview_key, True))
+            preview.toggled.connect(
+                lambda value, key=preview_key: self.store.set_preference(key, value))
+            self.notification_kind_previews[kind] = preview
+            row = QVBoxLayout()
+            row.addWidget(combo)
+            row.addWidget(preview)
+            kinds_form.addRow(label, row)
+            combo.setAccessibleName(f"{label} · Bildirim kuralı")
+        options.addWidget(kinds_box)
+
+        quiet_box = QGroupBox("Sessiz saatler")
+        quiet_form = QFormLayout(quiet_box)
+        self.notification_quiet = QCheckBox("Sessiz saatleri etkinleştir")
+        self.notification_quiet.setChecked(self.store.preference("notifications/quiet", False))
+        self.notification_quiet.toggled.connect(
+            lambda value: self.store.set_preference("notifications/quiet", value))
+        quiet_form.addRow(self.notification_quiet)
+        times = []
+        for key, label, default in (("start", "Başlangıç", "22:00"), ("end", "Bitiş", "08:00")):
+            pref_key = f"notifications/quiet/{key}"
+            edit = QTimeEdit()
+            edit.setDisplayFormat("HH:mm")
+            edit.setTime(QTime.fromString(self.store.preference(pref_key, default), "HH:mm"))
+            edit.setEnabled(self.notification_quiet.isChecked())
+            self.notification_quiet.toggled.connect(edit.setEnabled)
+            edit.timeChanged.connect(
+                lambda value, name=pref_key: self.store.set_preference(name, value.toString("HH:mm")))
+            quiet_form.addRow(label, edit)
+            times.append(edit)
+        self.notification_quiet_start, self.notification_quiet_end = times
+        self.notification_quiet_priority = QCheckBox("Önemli sohbetlere izin ver")
+        self.notification_quiet_priority.setChecked(
+            self.store.preference("notifications/quiet/priority", False))
+        self.notification_quiet_priority.setEnabled(self.notification_quiet.isChecked())
+        self.notification_quiet.toggled.connect(self.notification_quiet_priority.setEnabled)
+        self.notification_quiet_priority.toggled.connect(
+            lambda value: self.store.set_preference("notifications/quiet/priority", value))
+        quiet_form.addRow(self.notification_quiet_priority)
+        note("Bilgisayarın yerel saati kullanılır. Başlangıç ve bitiş aynıysa tüm gün sessize alınır.", quiet_form)
+        options.addWidget(quiet_box)
+        options.addStretch()
+
+        chats = QWidget()
+        chats_layout = QVBoxLayout(chats)
+        tabs.addTab(chats, "Sohbete özel")
+        note("Sohbete özel kurallar tür ayarının önüne geçer. Önemli sohbetler etiketlenir "
+             "ve normal bildirimlerin bekleme süresinden etkilenmez. Genel kapsam her zaman uygulanır.", chats_layout)
+        self.notification_chat_search = QLineEdit()
+        self.notification_chat_search.setPlaceholderText("Sohbet adına göre ara…")
+        self.notification_chat_search.setClearButtonEnabled(True)
+        self.notification_chat_search.textChanged.connect(self._refresh_notification_chats)
+        self.notification_chat_filter = QComboBox()
+        self.notification_chat_filter.addItem("Tüm sohbetler", "")
+        self.notification_chat_filter.addItem("Önemli sohbetler", "priority")
+        for kind, label in NOTIFICATION_KINDS.items():
+            self.notification_chat_filter.addItem(label, kind)
+        self.notification_chat_filter.currentIndexChanged.connect(self._refresh_notification_chats)
+        filters = QHBoxLayout()
+        filters.addWidget(self.notification_chat_search, 1)
+        filters.addWidget(self.notification_chat_filter)
+        chats_layout.addLayout(filters)
+        self.notification_chats = QListWidget()
+        chats_layout.addWidget(self.notification_chats, 1)
+        self.notification_chat_empty = QLabel("Bu filtreye uyan sohbet yok.", objectName="muted")
+        chats_layout.addWidget(self.notification_chat_empty)
+        self.notification_chat_rule = self._notification_rule_combo(
+            ("default", "all", "mentions", "priority", "off"))
+        rule_form = QFormLayout()
+        rule_form.addRow("Seçili sohbetin kuralı", self.notification_chat_rule)
+        chats_layout.addLayout(rule_form)
+        self.notification_chat_rule.setEnabled(False)
+        self.notification_chat_rule.currentIndexChanged.connect(self._change_notification_chat_rule)
+        self.notification_chats.currentItemChanged.connect(self._load_notification_chat_rule)
+        self.notification_tabs = tabs
+        return page
+
+    @staticmethod
+    def _notification_rule_combo(choices):
+        combo = QComboBox()
+        for choice in choices:
+            combo.addItem(NOTIFICATION_RULES[choice], choice)
+        return combo
+
+    def _notification_chat_key(self):
+        account = self.store.preference("telegram/user_id")
+        return f"notifications/chats/{account}" if account is not None else "notifications/chats/local"
+
+    def _refresh_notification_chats(self, *_):
+        current = self.notification_chats.currentItem()
+        selected = current.data(Qt.UserRole) if current else None
+        rules = self.store.preference(self._notification_chat_key(), {})
+        query = self.notification_chat_search.text().strip().casefold()
+        selected_filter = self.notification_chat_filter.currentData()
+        self.notification_chats.clear()
+        selected_index = 0
+        rows = sorted(self.store.chats(include_hidden=True), key=lambda row: row["title"].casefold())
+        for chat in rows:
+            if query not in chat["title"].casefold():
+                continue
+            rule = rules.get(str(chat["peer_id"]), "default")
+            if selected_filter == "priority" and rule != "priority":
+                continue
+            if selected_filter in NOTIFICATION_KINDS and selected_filter != chat["kind"]:
+                continue
+            suffix = f" · {NOTIFICATION_RULES[rule]}" if rule != "default" else ""
+            item = QListWidgetItem(f"{chat['title']} · {chat['kind']}{suffix}")
+            item.setData(Qt.UserRole, chat["peer_id"])
+            item.setData(Qt.UserRole + 1, chat["kind"])
+            item.setData(Qt.UserRole + 2, rule)
+            if chat["peer_id"] == selected:
+                selected_index = self.notification_chats.count()
+            self.notification_chats.addItem(item)
+        has_chats = self.notification_chats.count() > 0
+        self.notification_chats.setCurrentRow(selected_index if has_chats else -1)
+        self.notification_chat_empty.setVisible(not has_chats)
+
+    def _load_notification_chat_rule(self, item, _previous):
+        combo = self.notification_chat_rule
+        with QSignalBlocker(combo):
+            combo.setEnabled(item is not None)
+            combo.model().item(combo.findData("mentions")).setEnabled(
+                bool(item and item.data(Qt.UserRole + 1) in MENTION_KINDS))
+            combo.setCurrentIndex(combo.findData(item.data(Qt.UserRole + 2) if item else "default"))
+
+    def _change_notification_chat_rule(self, _index):
+        item = self.notification_chats.currentItem()
+        if item:
+            peer = str(item.data(Qt.UserRole))
+            rule = self.notification_chat_rule.currentData()
+            key = self._notification_chat_key()
+            rules = self.store.preference(key, {})
+            if rule == "default":
+                rules.pop(peer, None)
+            else:
+                rules[peer] = rule
+            self.store.set_preference(key, rules)
+            self._refresh_notification_chats()
+
+    def _open_chat_notification_settings(self, peer_id):
+        self.navigate("notifications")
+        self.notification_tabs.setCurrentIndex(1)
+        self.notification_chat_search.clear()
+        self.notification_chat_filter.setCurrentIndex(0)
+        for index in range(self.notification_chats.count()):
+            if self.notification_chats.item(index).data(Qt.UserRole) == peer_id:
+                self.notification_chats.setCurrentRow(index)
+                break
+
     def _header_dummy(self):pass
     def _mark_nav(self,key):
         for k,b in self.nav.items():b.setProperty("active",k==key);b.style().unpolish(b);b.style().polish(b)
@@ -649,11 +863,12 @@ class MainWindow(QMainWindow):
     def navigate(self,key):
         self.active_nav=key;self._mark_nav(key);self.conversation.show()
         if key in ("chats","folders"):self.center_stack.setCurrentIndex(0);self.tabs.setCurrentIndex(0 if key=="chats" else 1);return
-        index={"settings":1,"history":2,"filters":3,"bulk":4}[key];self.center_stack.setCurrentIndex(index)
-        if key in ("settings","history","filters","bulk"):self.conversation.hide()
+        index={"settings":1,"history":2,"filters":3,"bulk":4,"notifications":5}[key];self.center_stack.setCurrentIndex(index)
+        self.conversation.hide()
         if key=="history":self.refresh_history()
         if key=="filters":self.refresh_hidden()
         if key=="bulk":self.refresh_bulk_collections()
+        if key=="notifications":self._refresh_notification_chats()
     def set_filter(self,key):
         self.active_kind=key
         for k,b in self.filters.items():b.setChecked(k==key)
@@ -1004,7 +1219,12 @@ class MainWindow(QMainWindow):
         if not item:return
         peers=self._chat_peers_for_context(item)
         if not peers:return
-        menu=QMenu(self.chat_list);hide=menu.addAction("Seçilileri gizle");add=menu.addAction("Seçilileri klasöre ekle");bulk=menu.addAction("Seçililere toplu mesaj gönder");chosen=menu.exec(self.chat_list.mapToGlobal(pos))
+        menu=QMenu(self.chat_list);hide=menu.addAction("Seçilileri gizle");add=menu.addAction("Seçilileri klasöre ekle");bulk=menu.addAction("Seçililere toplu mesaj gönder")
+        notifications=menu.addAction("Bildirim ayarları…") if len(peers)==1 else None
+        chosen=menu.exec(self.chat_list.mapToGlobal(pos))
+        if notifications is not None and chosen==notifications:
+            self._open_chat_notification_settings(peers[0])
+            return
         if chosen==hide:self.store.set_hidden(peers,True);self.refresh_chats()
         elif chosen==add:
             cs=self.store.collections();names=[" › ".join(self.store.collection_path(c['id'])) for c in cs]
@@ -1650,7 +1870,9 @@ class MainWindow(QMainWindow):
     def _on_live_message(self,row):
         self.store.cache_messages([{k:row.get(k) for k in ['peer_id','message_id','sender_id','sender_name','text','date','outgoing','media_json','reactions_json','edit_date','edit_hidden']}])
         if not self.store.chat(row['peer_id']):
-            self.store.upsert_chats([{"peer_id":row['peer_id'],"access_hash":None,"title":row.get('chat_title') or "Telegram sohbet","kind":"Grup" if row['peer_id']<0 else "Kişi","username":None,"can_send":1,"unread_count":0,"last_message":row['text'] or "Medya","last_message_at":row['date'],"last_message_id":row['message_id'],"last_message_outgoing":row['outgoing'],"last_message_read":row.get('read',0)}])
+            self.store.upsert_chats([{"peer_id":row['peer_id'],"access_hash":None,"title":row.get('chat_title') or "Telegram sohbet","kind":row.get("chat_kind") or ("Grup" if row['peer_id']<0 else "Kişi"),"username":None,"can_send":1,"unread_count":0,"last_message":row['text'] or "Medya","last_message_at":row['date'],"last_message_id":row['message_id'],"last_message_outgoing":row['outgoing'],"last_message_read":row.get('read',0)}])
+            if self.active_nav == "notifications":
+                self._refresh_notification_chats()
         else:self.store.update_last_message(row['peer_id'],row['text'] or "Medya",row['date'],incoming=not row['outgoing'],outgoing=bool(row['outgoing']),read=row.get('read',False),message_id=row['message_id'])
         self.refresh_chats()
         if self.selected_peer==row['peer_id']:self._render_messages(row['peer_id'])
@@ -1681,19 +1903,65 @@ class MainWindow(QMainWindow):
             self._set_message_bubble(item,updated)
             break
 
-    def _show_local_notification(self,row):
-        mode=self.notification_mode.currentText() if hasattr(self,"notification_mode") else self.store.preference('notifications/mode','Tüm bildirimler')
-        if mode=="Sessiz mod" or (mode=="Yalnızca koleksiyonlar" and not self.store.is_in_any_collection(row['peer_id'])):return
-        if bool(row.get("outgoing")):return
-        if self.context_mode=="chat" and self.selected_peer==row.get("peer_id"):return
-        if self._notification_window_is_foreground():return
-        chat=self.store.chat(row['peer_id']);title=(chat or {}).get('title',row.get('chat_title') or 'Telegram sohbet');text=(row['text'] or "Yeni bir medya iletisi") if self.notification_preview.isChecked() else "Yeni Telegram iletisi"
-        now=monotonic()
-        if now-self._last_notification_at<5:
-            self._suppressed_notifications+=1;return
-        if self._suppressed_notifications:text=f"{self._suppressed_notifications+1} yeni mesaj · {text}"
-        self._suppressed_notifications=0;self._last_notification_at=now
-        self.tray.showMessage(title,text[:180],QSystemTrayIcon.MessageIcon.Information,5000)
+    def _show_local_notification(self, row):
+        if row.get("outgoing") or self._notification_window_is_foreground():
+            return
+        peer_id = row["peer_id"]
+        if self.context_mode == "chat" and self.selected_peer == peer_id:
+            return
+        scope = self.notification_mode.currentText()
+        if scope == "Sessiz mod":
+            return
+        if scope == "Yalnızca koleksiyonlar" and not self.store.is_in_any_collection(peer_id):
+            return
+
+        chat = self.store.chat(peer_id) or {}
+        kind = row.get("chat_kind") or chat.get("kind") or ("Grup" if peer_id < 0 else "Kişi")
+        rules = self.store.preference(self._notification_chat_key(), {})
+        rule = rules.get(str(peer_id), "default")
+        if rule == "default":
+            combo = self.notification_kind_modes.get(kind)
+            rule = combo.currentData() if combo else "all"
+        priority = rule == "priority"
+        if scope == "Yalnızca önemli sohbetler" and not priority:
+            return
+        if rule == "off" or (rule == "mentions" and not row.get("mentioned")):
+            return
+        if self.notification_quiet.isChecked() and self._in_notification_quiet_hours(QTime.currentTime()):
+            if not (priority and self.notification_quiet_priority.isChecked()):
+                return
+
+        preview = self.notification_kind_previews.get(kind)
+        show_text = self.notification_preview.isChecked() and (preview is None or preview.isChecked())
+        title = chat.get("title") or row.get("chat_title") or "Telegram sohbeti"
+        body = (row.get("text") or "Yeni bir medya iletisi") if show_text else "Yeni Telegram iletisi"
+        now = monotonic()
+        if priority:
+            if now-self._last_priority_notification_at < 5:
+                self._suppressed_priority_notifications += 1
+                return
+            title = f"Önemli · {title}"
+            suppressed = self._suppressed_priority_notifications
+            self._suppressed_priority_notifications = 0
+            self._last_priority_notification_at = now
+        else:
+            if now-self._last_notification_at < 5:
+                self._suppressed_notifications += 1
+                return
+            suppressed = self._suppressed_notifications
+            self._suppressed_notifications = 0
+        self._last_notification_at = now
+        if suppressed:
+            body = f"{suppressed + 1} yeni mesaj · {body}"
+        self.tray.showMessage(title, body[:180], QSystemTrayIcon.MessageIcon.Information, 5000)
+
+    def _in_notification_quiet_hours(self, now):
+        start = self.notification_quiet_start.time()
+        end = self.notification_quiet_end.time()
+        if start < end:
+            return start <= now < end
+        return now >= start or now < end
+
     def _notification_window_is_foreground(self):
         # Qt/Windows can briefly report an on-screen window as inactive while
         # focus moves between child widgets. A native tray toast is queued by
@@ -1703,6 +1971,7 @@ class MainWindow(QMainWindow):
     async def sync_chats(self):
         try:
             rows=await self.telegram.load_dialogs();self.store.upsert_chats(rows,complete_sync=True);self.dialogs={r['peer_id']:r for r in rows};self.refresh_chats();self.refresh_tree();self.statusBar().showMessage(f"{len(rows)} sohbet eşitlendi",6000)
+            if self.active_nav=="notifications":self._refresh_notification_chats()
         except Exception as e:QMessageBox.warning(self,"Senkronizasyon başarısız",str(e))
     async def disconnect_telegram(self):
         service=self.telegram;self.telegram=None
@@ -1711,7 +1980,7 @@ class MainWindow(QMainWindow):
     def logout_telegram(self):
         if QMessageBox.question(self,"Telegram oturumundan çıkış yap","Bu bilgisayardaki Telegram kullanıcı oturumu kapatılacak. Yerel klasörler ve gönderim kayıtları korunur. Devam edilsin mi?",QMessageBox.Yes|QMessageBox.No)==QMessageBox.Yes:asyncio.create_task(self._discard_new_account_session())
     def _load_settings(self):
-        self.theme.setCurrentText(self.store.preference('appearance/theme','Açık'));self.font.setCurrentText(self.store.preference('appearance/font','Segoe UI'));self.font_size.setValue(self.store.preference('appearance/font_size',13));self.density.setCurrentText(self.store.preference('appearance/density','Rahat'));self.notification_mode.setCurrentText(self.store.preference('notifications/mode','Tüm bildirimler'));self.notification_preview.setChecked(self.store.preference('notifications/preview',True));self.credit_check.setChecked(self.store.preference('appearance/credit',True));self.credit.setVisible(self.credit_check.isChecked());self.bg_path.setText(self.store.preference('appearance/background',''));self.accent_btn.setText(self.store.preference('appearance/accent','#a90025'));self.apply_theme();self.apply_font();self.apply_density();self._set_message_background(self.bg_path.text())
+        self.theme.setCurrentText(self.store.preference('appearance/theme','Açık'));self.font.setCurrentText(self.store.preference('appearance/font','Segoe UI'));self.font_size.setValue(self.store.preference('appearance/font_size',13));self.density.setCurrentText(self.store.preference('appearance/density','Rahat'));self.credit_check.setChecked(self.store.preference('appearance/credit',True));self.credit.setVisible(self.credit_check.isChecked());self.bg_path.setText(self.store.preference('appearance/background',''));self.accent_btn.setText(self.store.preference('appearance/accent','#a90025'));self.apply_theme();self.apply_font();self.apply_density();self._set_message_background(self.bg_path.text())
     def _refresh_ui_icons(self):
         theme = self.theme.currentText() if hasattr(self, "theme") else "Açık"
         dark = theme == "Koyu" or (theme == "Sistem ayarı" and QApplication.palette().color(QPalette.Window).lightness() < 128)
