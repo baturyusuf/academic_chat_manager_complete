@@ -15,11 +15,13 @@ try:  # package import for tests; direct imports for the frozen desktop entry po
     from .storage import Store, app_data_dir
     from .telegram_service import TelegramService
     from .messaging import BulkSender
+    from .media import media_metadata, decode_media, format_size, safe_filename, bulk_attachment_cards
     from . import security
 except ImportError:
     from storage import Store, app_data_dir
     from telegram_service import TelegramService
     from messaging import BulkSender
+    from media import media_metadata, decode_media, format_size, safe_filename, bulk_attachment_cards
     import security
 
 APP_DIR=Path(__file__).parent
@@ -171,6 +173,10 @@ def _theme_stylesheet(dark: bool, accent: str) -> str:
     QMenu#messageContextMenu{{padding:6px;border-radius:9px}}
     QMenu#messageContextMenu::item{{padding:9px 26px 9px 34px;border-radius:6px}}
     QMenu#messageContextMenu::separator{{height:1px;background:{c['border']};margin:5px 8px}}
+    QFrame#attachmentCard{{background:{c['raised']};border:1px solid {c['border']};border-radius:8px}}
+    QLabel#attachmentName{{font-weight:600}}
+    QPushButton#attachmentDownload{{text-align:center;color:{highlight};border:1px solid {c['border']};padding:6px 9px}}
+    QPushButton#attachmentDownload:disabled{{color:{c['muted']}}}
     QFrame#incomingBubble{{background:{c['surface']};border:1px solid {c['border']};border-radius:13px}}
     QFrame#outgoingBubble{{background:{_mix_color(accent, c['surface'], .13 if not dark else .32)};border:1px solid {_mix_color(accent, c['border'], .25)};border-radius:13px}}
     QLabel#messageSender{{font-weight:650;color:{highlight}}}
@@ -244,6 +250,7 @@ class FileDropTextEdit(QPlainTextEdit):
 
 class MessageBubbleRow(QWidget):
     contextMenuRequested = Signal(QPoint)
+    downloadRequested = Signal(dict)
 
     def __init__(self, message):
         super().__init__()
@@ -255,7 +262,11 @@ class MessageBubbleRow(QWidget):
         self.bubble.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Minimum)
         content = QVBoxLayout(self.bubble); content.setContentsMargins(12, 8, 12, 8); content.setSpacing(5)
         sender = QLabel("Siz" if self.outgoing else (message.get("sender_name") or "Telegram"), objectName="messageSender")
-        body_text = message.get("text") or "[Medya veya dosya]"
+        attachments=message.get("attachments")
+        if attachments is None:
+            metadata=decode_media(message.get("media_json"))
+            attachments=[{**metadata,"peer_id":message.get("peer_id"),"message_id":message.get("message_id")}] if metadata else []
+        body_text = message.get("text") or ("" if attachments else "[Medya veya dosya]")
         body = QLabel(body_text, objectName="messageText"); body.setWordWrap(True); body.setTextInteractionFlags(Qt.TextSelectableByMouse)
         stamp=_format_local_datetime(message.get("date"),"%H:%M")
         footer = QLabel(stamp, objectName="messageTime"); footer.setAlignment(Qt.AlignRight)
@@ -267,7 +278,25 @@ class MessageBubbleRow(QWidget):
             quote=(reply.get("text") or "[Medya veya dosya]").replace("\n"," ").strip()
             if len(quote)>140:quote=quote[:137]+"…"
             self.reply_quote=QLabel(f"↪ {reply.get('sender') or 'Mesaj'}\n{quote}",objectName="replyQuote");self.reply_quote.setWordWrap(True);content.addWidget(self.reply_quote)
-        content.addWidget(body);content.addWidget(footer)
+        content.addWidget(body)
+        if not body_text:body.hide()
+        self.attachment_buttons=[]
+        for attachment in attachments:
+            card=QFrame(objectName="attachmentCard")
+            layout=QVBoxLayout(card);layout.setContentsMargins(9,7,9,7);layout.setSpacing(4)
+            name=QLabel(safe_filename(attachment.get("name")),objectName="attachmentName")
+            name.setTextFormat(Qt.PlainText);name.setWordWrap(True);layout.addWidget(name)
+            info=QLabel(format_size(attachment.get("size"))+(f" · {attachment['mime_type']}" if attachment.get("mime_type") else ""),objectName="muted")
+            info.setTextFormat(Qt.PlainText);info.setWordWrap(True);layout.addWidget(info)
+            button=QPushButton("İndir / Bilgisayara kaydet…",objectName="attachmentDownload")
+            button.setAccessibleName("Dosyayı indir: "+name.text())
+            available=attachment.get("peer_id") is not None and bool(attachment.get("message_id"))
+            button.setEnabled(available)
+            button.setToolTip("Dosyayı Telegram üzerinden kaydet" if available else "Bu gönderi için dosya indirme bağlantısı kayıtlı değil; alıcı sohbetinden açabilirsiniz.")
+            request={"peer_id":attachment.get("peer_id"),"message_id":attachment.get("message_id"),"media_json":json.dumps(attachment,ensure_ascii=False)}
+            button.clicked.connect(lambda checked=False,target=request:self.downloadRequested.emit(target))
+            self.attachment_buttons.append(button);layout.addWidget(button);content.addWidget(card)
+        content.addWidget(footer)
         reactions=[]
         try:reactions=json.loads(message.get("reactions_json") or "[]")
         except (TypeError,json.JSONDecodeError):pass
@@ -482,7 +511,7 @@ class MainWindow(QMainWindow):
     def _history_page(self):
         p=QWidget();v=QVBoxLayout(p);h=QHBoxLayout();h.addWidget(QLabel("Gönderim geçmişi",objectName="sectionTitle"));h.addStretch();self.retry_btn=QPushButton("Başarısızları yeniden dene");self.retry_btn.clicked.connect(self.retry_failed);h.addWidget(self.retry_btn);self.cancel_history_job_btn=QPushButton("Seçili işi iptal et");self.cancel_history_job_btn.clicked.connect(self.cancel_selected_history_job);h.addWidget(self.cancel_history_job_btn);b=_icon_button("refresh","Yenile");b.clicked.connect(self.refresh_history);h.addWidget(b);v.addLayout(h)
         self.history=QTableWidget(0,7);self.history.setHorizontalHeaderLabels(["Tarih","Koleksiyon","Durum","Başarılı","Toplam","Mesaj","Ekler"]);header=self.history.horizontalHeader();header.setSectionResizeMode(QHeaderView.Interactive);header.setStretchLastSection(False);header.setMinimumSectionSize(90);self.history.setColumnWidth(0,170);self.history.setColumnWidth(1,260);self.history.setColumnWidth(2,110);self.history.setColumnWidth(3,90);self.history.setColumnWidth(4,90);self.history.setColumnWidth(5,320);self.history.setColumnWidth(6,200);self.history.setSortingEnabled(True);self.history.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded);self.history.setSelectionBehavior(QAbstractItemView.SelectRows);v.addWidget(self.history,1)
-        self.target_detail=QListWidget();self.target_detail.setMaximumHeight(200);self.target_detail.setSelectionMode(QAbstractItemView.SingleSelection);v.addWidget(QLabel("Alıcı sonuçları"));v.addWidget(self.target_detail);self.cancel_history_target_btn=QPushButton("Seçili bekleyen alıcıyı iptal et");self.cancel_history_target_btn.clicked.connect(self.cancel_selected_history_target);v.addWidget(self.cancel_history_target_btn);self.history.itemSelectionChanged.connect(self._history_selected);return p
+        self.target_detail=QListWidget();self.target_detail.setMaximumHeight(200);self.target_detail.setSelectionMode(QAbstractItemView.SingleSelection);v.addWidget(QLabel("Alıcı sonuçları"));v.addWidget(self.target_detail);self.cancel_history_target_btn=QPushButton("Seçili bekleyen alıcıyı iptal et");self.cancel_history_target_btn.clicked.connect(self.cancel_selected_history_target);v.addWidget(self.cancel_history_target_btn);self.history_download_btn=QPushButton("Gönderilen dosyayı indir…");self.history_download_btn.setEnabled(False);self.history_download_btn.clicked.connect(self._download_history_attachment);v.addWidget(self.history_download_btn);self.history.itemSelectionChanged.connect(self._history_selected);return p
     def _filters_page(self):
         p=QWidget();v=QVBoxLayout(p);v.addWidget(QLabel("Filtreler ve görünürlük",objectName="sectionTitle"));self.visible_mode=QComboBox();self.visible_mode.addItems(["Tüm sohbetler","Yalnızca gruplar","Yalnızca kişiler","Yalnızca koleksiyonlardakiler","Gizlenen sohbetleri yönet"]);self.visible_mode.currentTextChanged.connect(self.refresh_chats);v.addWidget(QLabel("Sohbet görünümü"));v.addWidget(self.visible_mode);self.notification_mode=QComboBox();self.notification_mode.addItems(["Tüm bildirimler","Yalnızca koleksiyonlar","Sessiz mod"]);self.notification_mode.currentTextChanged.connect(lambda x:self.store.set_preference("notifications/mode",x));v.addWidget(QLabel("Uygulama bildirim modu"));v.addWidget(self.notification_mode);self.notification_preview=QCheckBox("Bildirimlerde ileti metnini göster");self.notification_preview.setChecked(True);self.notification_preview.toggled.connect(lambda x:self.store.set_preference("notifications/preview",x));v.addWidget(self.notification_preview);self.visibility_list=QListWidget();self.visibility_list.setSelectionMode(QAbstractItemView.ExtendedSelection);v.addWidget(QLabel("Sohbetler · çoklu seçim yapabilirsiniz"));v.addWidget(self.visibility_list,1);row=QHBoxLayout();hide=_icon_button("eye-off","Seçilileri gizle");unhide=_icon_button("eye","Gizlemeyi kaldır");hide.clicked.connect(lambda:self._set_hidden_ids([i.data(Qt.UserRole) for i in self.visibility_list.selectedItems()],True));unhide.clicked.connect(lambda:self._unhide_selected());row.addWidget(hide);row.addWidget(unhide);v.addLayout(row);return p
     def _bulk_page(self):
@@ -656,10 +685,10 @@ class MainWindow(QMainWindow):
             try:
                 files=json.loads(job.get('files_json') or '[]')
             except (TypeError,json.JSONDecodeError):files=[]
-            if files:body=(body+"\n" if body else "")+"📎 "+", ".join(Path(f).name for f in files)
-            if not body:body="[Ekli dosya]"
-            body+=f"\n\nTeslim durumu: {job.get('sent') or 0}/{job.get('total') or 0} · {job['status']}"
-            entry={"kind":"collection_job","job_id":job['id'],"peer_id":None,"message_id":job['id'],"sender_id":None,"sender_name":"Siz · Klasör gönderimi","text":body,"date":job['created_at'],"outgoing":1,"media_json":job.get('files_json')}
+            attachments=bulk_attachment_cards(files,self.store.job_targets(job["id"]))
+            if not body and not attachments:body="[Ekli dosya]"
+            body+=( "\n\n" if body else "")+f"Teslim durumu: {job.get('sent') or 0}/{job.get('total') or 0} · {job['status']}"
+            entry={"kind":"collection_job","job_id":job['id'],"peer_id":None,"message_id":job['id'],"sender_id":None,"sender_name":"Siz · Klasör gönderimi","text":body,"date":job['created_at'],"outgoing":1,"media_json":job.get('files_json'),"attachments":attachments}
             self._append_message_bubble(entry)
         self.messages.scrollToBottom()
     def _tree_nodes_for_context(self,item):
@@ -843,7 +872,7 @@ class MainWindow(QMainWindow):
             self._append_message_bubble(m)
         self.messages.scrollToBottom()
     def _append_message_bubble(self,message):
-        item=QListWidgetItem();item.setData(Qt.UserRole,message);row=MessageBubbleRow(message);row.set_bubble_limit(max(240,int(self.messages.viewport().width()*.76)));self.messages.addItem(item);self.messages.setItemWidget(item,row);row.contextMenuRequested.connect(lambda global_pos,target=item:self._message_menu(self.messages.viewport().mapFromGlobal(global_pos),item=target));item.setSizeHint(QSize(max(1,self.messages.viewport().width()),row.sizeHint().height()+28))
+        item=QListWidgetItem();item.setData(Qt.UserRole,message);row=MessageBubbleRow(message);row.set_bubble_limit(max(240,int(self.messages.viewport().width()*.76)));self.messages.addItem(item);self.messages.setItemWidget(item,row);row.contextMenuRequested.connect(lambda global_pos,target=item:self._message_menu(self.messages.viewport().mapFromGlobal(global_pos),item=target));row.downloadRequested.connect(lambda target:asyncio.create_task(self._download_message(target)));item.setSizeHint(QSize(max(1,self.messages.viewport().width()),row.sizeHint().height()+28))
     def _set_reply(self,message):
         self.reply_to=message.get("message_id");self.reply_context={"sender":message.get("sender_name") or "Mesaj","text":message.get("text") or "[Medya veya dosya]"}
         preview=self.reply_context["text"].replace("\n"," ").strip()
@@ -938,7 +967,7 @@ class MainWindow(QMainWindow):
         reaction_menu=menu.addMenu(icon("emoji"),"Tepki bırak")
         for emoji in ["👍","❤️","😂","😮","😢","🙏","🔥","🎉"]:
             reaction_action=reaction_menu.addAction(emoji);reaction_action.triggered.connect(lambda checked=False,value=emoji,target=m:asyncio.create_task(self._react_to_message(target,value)))
-        download=menu.addAction(icon("download"),"Dosyayı indir…") if m.get("media_json") else None
+        download=menu.addAction(icon("download"),"Dosyayı indir…") if decode_media(m.get("media_json")) else None
         edit=delete=None
         if m.get("outgoing"):
             menu.addSeparator()
@@ -962,12 +991,22 @@ class MainWindow(QMainWindow):
             await self.load_history(message['peer_id']);self.statusBar().showMessage(f"{emoji} tepkisi eklendi",4000)
         except Exception as e:QMessageBox.warning(self,"Tepki gönderilemedi",str(e))
     async def _download_message(self,m):
-        try:default_name=json.loads(m.get('media_json') or '{}').get('name') or "telegram_file"
-        except (TypeError,json.JSONDecodeError):default_name="telegram_file"
+        if not self.telegram or not self.telegram.client or not self.telegram.client.is_connected():
+            QMessageBox.information(self,"Telegram bağlı değil","Dosya indirmek için Telegram hesabını bağlayın.");return
+        metadata=decode_media(m.get("media_json"))
+        if not metadata or m.get("peer_id") is None or not m.get("message_id"):
+            QMessageBox.information(self,"Dosya indirilemiyor","Bu dosya için geçerli bir Telegram mesajı kayıtlı değil.");return
+        default_name=safe_filename(metadata["name"])
         path,_=QFileDialog.getSaveFileName(self,"Dosyayı kaydet",default_name)
         if not path:return
-        try:await self.telegram.download_media(m['peer_id'],m['message_id'],path);self.statusBar().showMessage(f"Kaydedildi: {path}",6000)
-        except Exception as e:QMessageBox.warning(self,"İndirme başarısız",str(e))
+        try:
+            self.statusBar().showMessage("Dosya indiriliyor…")
+            saved=await self.telegram.download_media(m["peer_id"],m["message_id"],path)
+            if not saved:raise IOError("Telegram dosyayı döndürmedi")
+            self.statusBar().showMessage(f"Kaydedildi: {saved}",6000)
+        except Exception as e:
+            self.statusBar().showMessage("İndirme başarısız",6000)
+            QMessageBox.warning(self,"İndirme başarısız",str(e))
     async def _edit_message(self,m,text):
         try:await self.telegram.edit_message(m['peer_id'],m['message_id'],text);await self.load_history(m['peer_id'])
         except Exception as e:QMessageBox.warning(self,"Düzenleme başarısız",str(e))
@@ -984,12 +1023,12 @@ class MainWindow(QMainWindow):
             rows=await self.telegram.search_messages(self.selected_peer,query)
             self.messages.clear()
             for m in reversed(rows):
-                file_obj=getattr(m,"file",None);file_name=getattr(file_obj,"name",None)
+                metadata=media_metadata(m)
                 reactions=[]
                 for item in getattr(getattr(m,"reactions",None),"results",[]) or []:
                     emoji=getattr(getattr(item,"reaction",None),"emoticon",None)
                     if emoji:reactions.append({"emoji":emoji,"count":int(getattr(item,"count",0) or 0),"chosen":bool(getattr(item,"chosen",False))})
-                self._append_message_bubble({"peer_id":self.selected_peer,"message_id":m.id,"sender_id":getattr(m,"sender_id",None),"sender_name":"Siz" if m.out else str(getattr(m,"sender_id",None) or "Telegram"),"text":m.message or "","date":m.date.isoformat() if m.date else "","outgoing":int(bool(m.out)),"media_json":json.dumps({"name":file_name}) if file_name else None,"reactions_json":json.dumps(reactions,ensure_ascii=False)})
+                self._append_message_bubble({"peer_id":self.selected_peer,"message_id":m.id,"sender_id":getattr(m,"sender_id",None),"sender_name":"Siz" if m.out else str(getattr(m,"sender_id",None) or "Telegram"),"text":m.message or "","date":m.date.isoformat() if m.date else "","outgoing":int(bool(m.out)),"media_json":json.dumps(metadata,ensure_ascii=False) if metadata else None,"reactions_json":json.dumps(reactions,ensure_ascii=False)})
         except Exception as e:QMessageBox.warning(self,"Arama başarısız",str(e))
     def start_bulk(self,cid=None):
         cid=cid if cid is not None else self.bulk_collection_combo.currentData()
@@ -1048,13 +1087,35 @@ class MainWindow(QMainWindow):
     def _history_selected(self):
         items=self.history.selectedItems()
         if not items:
-            self.target_detail.clear();self.cancel_history_job_btn.setEnabled(False);self.cancel_history_target_btn.setEnabled(False);return
+            self.target_detail.clear();self.cancel_history_job_btn.setEnabled(False);self.cancel_history_target_btn.setEnabled(False);self.history_download_btn.setEnabled(False);return
         jobid=items[0].data(Qt.UserRole)
         if not jobid:return
         self.target_detail.clear();targets=self.store.job_targets(jobid);active=any(t['status'] in ('pending','sending') for t in targets);self.cancel_history_job_btn.setEnabled(active)
         for t in targets:
             item=QListWidgetItem(f"{t['peer_title']}  ·  {t['status']}"+(f"  ·  {t['error']}" if t['error'] else ""));item.setData(Qt.UserRole,(jobid,t['peer_id'],t['status']));self.target_detail.addItem(item)
         self.cancel_history_target_btn.setEnabled(any(t['status']=='pending' for t in targets))
+        self.history_download_btn.setEnabled(bool(self._history_downloadable(jobid,targets)))
+
+    def _history_downloadable(self,jobid,targets=None):
+        job=next((job for job in self._history_jobs if job["id"]==jobid),None)
+        if not job:return []
+        try:files=json.loads(job.get("files_json") or "[]")
+        except (TypeError,ValueError):return []
+        return [card for card in bulk_attachment_cards(files,self.store.job_targets(jobid) if targets is None else targets) if card.get("message_id")]
+
+    def _download_history_attachment(self):
+        items=self.history.selectedItems()
+        if not items:return
+        cards=self._history_downloadable(items[0].data(Qt.UserRole))
+        if not cards:return
+        if len(cards)>1:
+            labels=[f"{i+1}. {card['name']} · {format_size(card.get('size'))}" for i,card in enumerate(cards)]
+            label,ok=QInputDialog.getItem(self,"Dosya indir","Kaydedilecek dosya:",labels,0,False)
+            if not ok:return
+            card=cards[labels.index(label)]
+        else:card=cards[0]
+        asyncio.create_task(self._download_message({"peer_id":card["peer_id"],"message_id":card["message_id"],"media_json":json.dumps(card,ensure_ascii=False)}))
+
     def cancel_selected_history_job(self):
         items=self.history.selectedItems()
         if not items:return
