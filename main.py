@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio, json, mimetypes, os, sys, traceback, uuid
 from pathlib import Path
+from telethon.errors import FloodWaitError
 from functools import lru_cache
 import certifi
 if os.name=="nt" or not os.environ.get("SSL_CERT_FILE") or not Path(os.environ["SSL_CERT_FILE"]).is_file():
@@ -13,13 +14,13 @@ from PySide6.QtSvg import QSvgRenderer
 from qasync import QEventLoop, asyncSlot
 try:  # package import for tests; direct imports for the frozen desktop entry point
     from .storage import Store, app_data_dir
-    from .telegram_service import TelegramService, reaction_rows, emoji_key, edit_metadata, edited_message_row
+    from .telegram_service import TelegramService, reaction_rows, emoji_key, edit_metadata, edited_message_row, invite_error_message
     from .messaging import BulkSender
     from .media import media_metadata, decode_media, format_size, safe_filename, bulk_attachment_cards
     from . import security
 except ImportError:
     from storage import Store, app_data_dir
-    from telegram_service import TelegramService, reaction_rows, emoji_key, edit_metadata, edited_message_row
+    from telegram_service import TelegramService, reaction_rows, emoji_key, edit_metadata, edited_message_row, invite_error_message
     from messaging import BulkSender
     from media import media_metadata, decode_media, format_size, safe_filename, bulk_attachment_cards
     import security
@@ -451,7 +452,7 @@ class InviteLinksDialog(QDialog):
     def __init__(self,entries,parent=None):
         super().__init__(parent);self.setWindowTitle("Davet bağlantıları");self.resize(760,620);self.setMinimumSize(520,380)
         root=QVBoxLayout(self)
-        intro=QLabel("Klasör yapısı ve davet bağlantıları. Metni dilediğiniz gibi düzenleyip kopyalayabilirsiniz.");intro.setWordWrap(True);root.addWidget(intro)
+        intro=QLabel("Klasör yapısı ve davet bağlantıları. Başarısız sohbetlerin nedenleri ayrı ayrı belirtilir. Metni düzenleyip kopyalayabilirsiniz.");intro.setWordWrap(True);root.addWidget(intro)
         self.editor=QPlainTextEdit();self.editor.setObjectName("inviteText");self.editor.setLineWrapMode(QPlainTextEdit.NoWrap);self.editor.setPlainText(self._format_entries(entries));root.addWidget(self.editor,1)
         footer=QHBoxLayout();self.copy_button=QPushButton("Metni kopyala");self.copy_button.setObjectName("primary");self.copy_status=QLabel("");self.copy_status.setObjectName("muted");close=QPushButton("Kapat");footer.addWidget(self.copy_button);footer.addWidget(self.copy_status);footer.addStretch();footer.addWidget(close);root.addLayout(footer)
         self.copy_button.clicked.connect(self._copy);close.clicked.connect(self.accept)
@@ -463,7 +464,7 @@ class InviteLinksDialog(QDialog):
             path=[part for part in entry.get("path",[]) if part] or ["Sohbet"]
             for part in path:
                 node=node["children"].setdefault(part,{"children":{},"links":[]})
-            node["links"].append(entry.get("link") or "[Davet bağlantısı oluşturulamadı]")
+            node["links"].append(entry.get("link") or "["+(entry.get("error") or "Davet bağlantısı oluşturulamadı")+"]")
         lines=["Aşağıdaki bağlantılardan ilgili topluluğa katılım sağlayabilirsiniz.",""]
         def append(node,depth=0):
             for label,child in node["children"].items():
@@ -778,36 +779,49 @@ class MainWindow(QMainWindow):
                 paths=[self.store.collection_path(owner_id) for owner_id in self.store.chat_collection_ids(peer_id)
                        if self.store.collection_path_ids(owner_id)[:len(root_path_ids)]==root_path_ids]
                 if not paths:paths=[self.store.collection_path(int(cid))]
-                target=targets.setdefault(peer_id,{"title":title,"paths":[]})
+                target=targets.setdefault(peer_id,{"title":title,"paths":[],"access_hash":chat.get("access_hash")})
                 target["paths"].extend(path+[title] for path in paths)
         for peer_id in peer_ids:
             peer_id=int(peer_id);chat=self.store.chat(peer_id)
             if not chat:continue
             paths=[self.store.collection_path(owner_id) for owner_id in self.store.chat_collection_ids(peer_id)] or [[]]
-            target=targets.setdefault(peer_id,{"title":chat["title"],"paths":[]})
+            target=targets.setdefault(peer_id,{"title":chat["title"],"paths":[],"access_hash":chat.get("access_hash")})
             target["paths"].extend(path+[chat["title"]] for path in paths)
         if not targets:
             QMessageBox.information(self,"Davet bağlantısı oluştur","Seçilen klasörlerde oluşturulacak sohbet bulunamadı.");return
         if not self.telegram or not self.telegram.client or not self.telegram.client.is_connected():
             QMessageBox.warning(self,"Telegram bağlı değil","Davet bağlantısı oluşturmak için önce Telegram hesabını bağlayın.");return
-        asyncio.create_task(self._create_invite_links(targets))
+        if getattr(self,"_invite_task",None) and not self._invite_task.done():
+            QMessageBox.information(self,"Davet bağlantıları","Bağlantılar zaten hazırlanıyor.");return
+        self._invite_task=asyncio.create_task(self._create_invite_links(targets))
     async def _create_invite_links(self,targets):
-        self.statusBar().showMessage(f"{len(targets)} sohbet için davet bağlantısı oluşturuluyor…")
-        invite_by_peer={}
-        for peer_id in targets:
+        service=self.telegram
+        self.statusBar().showMessage(f"{len(targets)} sohbet için davet bağlantısı hazırlanıyor…")
+        invite_by_peer={};stop_reason=None
+        for index,(peer_id,target) in enumerate(targets.items(),1):
+            if self.telegram is not service or not service or not service.client or not service.client.is_connected():
+                self.statusBar().showMessage("Telegram bağlantısı değişti; işlem durduruldu.",5000);return
             if int(peer_id)>=0:
-                invite_by_peer[peer_id]="[Kişi sohbetleri için davet bağlantısı desteklenmiyor]";continue
+                invite_by_peer[peer_id]={"error":"Kişi ve bot sohbetleri için davet bağlantısı desteklenmiyor."};continue
+            if stop_reason:
+                invite_by_peer[peer_id]={"error":stop_reason};continue
+            self.statusBar().showMessage(f"Davet bağlantıları: {index}/{len(targets)}")
             try:
-                invite_by_peer[peer_id]=await self.telegram.export_chat_invite_link(peer_id)
+                link=await service.export_chat_invite_link(peer_id,access_hash=target.get("access_hash"))
+                invite_by_peer[peer_id]={"link":link}
+            except FloodWaitError as e:
+                stop_reason=invite_error_message(e)
+                invite_by_peer[peer_id]={"error":stop_reason}
             except Exception as e:
-                reason=str(e).strip() or type(e).__name__
-                invite_by_peer[peer_id]=f"[Davet bağlantısı oluşturulamadı: {reason}]"
+                invite_by_peer[peer_id]={"error":invite_error_message(e)}
+        if self.telegram is not service or not service.client or not service.client.is_connected():
+            self.statusBar().showMessage("Telegram bağlantısı değişti; işlem durduruldu.",5000);return
         entries=[]
         for peer_id,target in targets.items():
-            link=invite_by_peer.get(peer_id)
             for path in dict.fromkeys(tuple(p) for p in target["paths"]):
-                entries.append({"path":list(path),"link":link})
-        self.statusBar().showMessage("Davet bağlantıları hazırlandı",5000)
+                entries.append({"path":list(path),**invite_by_peer[peer_id]})
+        successes=sum(bool(result.get("link")) for result in invite_by_peer.values())
+        self.statusBar().showMessage(f"Davet bağlantıları: {successes}/{len(targets)} başarılı",5000)
         dlg=InviteLinksDialog(entries,self);dlg.exec()
     def _dropped_chats(self,cid,peer_ids):
         self.store.add_chats_to_collection(cid,peer_ids);self.refresh_tree();self.statusBar().showMessage(f"{len(peer_ids)} sohbet klasöre eklendi",4000)

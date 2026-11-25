@@ -4,15 +4,35 @@ import asyncio
 import os
 import tempfile
 import time
+import re
 from datetime import timezone
 from pathlib import Path
 from telethon import TelegramClient, events, errors, types, utils
-from telethon.tl.functions.messages import GetHistoryRequest, SendReactionRequest, GetMessagesReactionsRequest
+from telethon.tl.functions.messages import GetHistoryRequest, SendReactionRequest, GetMessagesReactionsRequest, ExportChatInviteRequest
 from telethon.tl.functions.help import GetAppConfigRequest
 try:
     from .media import media_metadata
 except ImportError:
     from media import media_metadata
+
+def invite_error_message(error):
+    if isinstance(error,errors.FloodWaitError):
+        return f"Telegram {error.seconds} saniye bekleme istedi; daha sonra yeniden deneyin."
+    code=str(getattr(error,"message","")).upper()
+    translations={
+        "CHAT_ADMIN_REQUIRED":"Davet bağlantısı oluşturmak için yönetici ve kullanıcı davet etme yetkisi gerekiyor.",
+        "CHAT_WRITE_FORBIDDEN":"Bu sohbette davet bağlantısı oluşturma yetkiniz yok.",
+        "CHANNEL_PRIVATE":"Özel gruba veya kanala erişiminiz yok.",
+        "CHANNEL_INVALID":"Kanal veya grup artık geçerli değil.",
+        "CHAT_ID_INVALID":"Grup kimliği artık geçerli değil; sohbetleri eşitleyin.",
+        "PEER_ID_INVALID":"Sohbet bulunamadı; sohbetleri eşitleyin.",
+        "CHANNEL_MONOFORUM_UNSUPPORTED":"Bu sohbet türü davet bağlantısını desteklemiyor.",
+    }
+    # Generated Telethon RPC errors do not always expose the symbolic RPC code
+    # in .message; use their class names as an additional stable lookup.
+    by_class={"".join(word.title() for word in key.split("_"))+"Error":value for key,value in translations.items()}
+    return translations.get(code) or by_class.get(type(error).__name__) or str(error).strip() or type(error).__name__
+
 
 def edit_metadata(message):
     """Telegram may suppress the edited label while still providing an edit date."""
@@ -112,9 +132,41 @@ class TelegramService:
             rows.append({"peer_id":peer_id,"message_id":m.id,"sender_id":m.sender_id,"sender_name":sender_name,"text":m.message or "","date":m.date.isoformat() if m.date else None,"outgoing":int(m.out),"media_json":__import__('json').dumps(file,ensure_ascii=False) if file else None,"reactions_json":__import__('json').dumps(reactions,ensure_ascii=False),"reply_to_message_id":reply_id,**edit_metadata(m),"message":m})
         return rows
     async def send_text(self,peer_id,text,reply_to=None):return await self.client.send_message(self._entity(peer_id),text,reply_to=reply_to)
-    async def export_chat_invite_link(self,peer_id):
-        """Create an invite link for a group/channel using the connected account's rights."""
-        return await self.client.export_chat_invite_link(self._entity(int(peer_id)))
+    async def export_chat_invite_link(self,peer_id,access_hash=None):
+        """Return a public URL or create an additional private invite; never revoke existing links."""
+        if not self.client or not self.client.is_connected():
+            raise ConnectionError("Telegram hesabı bağlı değil.")
+        peer_id=int(peer_id)
+        real_id,peer_type=utils.resolve_id(peer_id)
+        if peer_type not in (types.PeerChat,types.PeerChannel):
+            raise ValueError("Kişi ve bot sohbetleri için davet bağlantısı oluşturulamaz.")
+        try:
+            peer=await self.client.get_input_entity(self._entity(peer_id))
+        except (ValueError,TypeError):
+            if peer_type is types.PeerChat:
+                peer=types.InputPeerChat(chat_id=real_id)
+            elif access_hash is not None:
+                peer=types.InputPeerChannel(channel_id=real_id,access_hash=int(access_hash))
+            else:
+                raise ValueError("Sohbet bilgisi bulunamadı; Ayarlar bölümünden sohbetleri eşitleyin.") from None
+        entity=await self.client.get_entity(peer)
+        if isinstance(entity,types.Chat) and getattr(entity,"migrated_to",None):
+            peer=await self.client.get_input_entity(entity.migrated_to)
+            entity=await self.client.get_entity(peer)
+        if not isinstance(entity,(types.Chat,types.Channel)) or getattr(entity,"left",False) or getattr(entity,"deactivated",False):
+            raise ValueError("Grup veya kanal erişilebilir değil; sohbetleri eşitleyin.")
+        username=getattr(entity,"username",None)
+        if not username:
+            username=next((entry.username for entry in getattr(entity,"usernames",None) or [] if getattr(entry,"active",False)),None)
+        if isinstance(entity,types.Channel) and username and re.fullmatch(r"[A-Za-z0-9_]+",username):
+            return "https://t.me/"+username
+        # MTProto uses a raw ExportChatInviteRequest, not a Bot API-style client method.
+        # The default request does not revoke existing invites or set usage/expiry limits.
+        result=await self.client(ExportChatInviteRequest(peer=peer),flood_sleep_threshold=0)
+        link=getattr(result,"link",None)
+        if not isinstance(link,str) or not re.fullmatch(r"https://t\.me/(?:\+|joinchat/)[A-Za-z0-9_-]+",link):
+            raise ValueError("Telegram geçerli bir davet bağlantısı döndürmedi.")
+        return link
     async def _reaction_limit(self):
         now=time.monotonic()
         if self._reaction_limit_cache and now-self._reaction_limit_cache[0]<300:

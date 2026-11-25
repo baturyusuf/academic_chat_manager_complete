@@ -468,3 +468,43 @@ def test_edited_indicator_and_live_update_preserve_message_state(tmp_path,monkey
         assert w.messages.itemWidget(item).footer.text()==initial
     finally:
         w.close()
+
+def test_invite_batch_reports_partial_success_and_stops_on_flood_wait(tmp_path,monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from telethon import errors
+    from academic_chat_manager import main
+    app=QApplication.instance() or QApplication([])
+    monkeypatch.setattr(main,"Store",lambda:__import__('academic_chat_manager.storage',fromlist=['Store']).Store(tmp_path/"invites-ui.sqlite3"))
+    main.PREFS.setValue("onboarding/dismissed",True)
+    w=MainWindow()
+    calls=[];captured=[]
+    async def export(peer_id,access_hash=None):
+        calls.append((peer_id,access_hash))
+        if peer_id==-2:raise errors.ChatAdminRequiredError(None)
+        if peer_id==-3:raise errors.FloodWaitError(None,12)
+        return "https://t.me/+example_invite"
+    class Dialog:
+        def __init__(self,entries,parent):captured.extend(entries)
+        def exec(self):return 0
+    monkeypatch.setattr(main,"InviteLinksDialog",Dialog)
+    w.telegram=SimpleNamespace(client=SimpleNamespace(is_connected=lambda:True),export_chat_invite_link=export)
+    targets={
+        -1:{"paths":[["A","Grup"],["B","Grup"],["A","Grup"]],"access_hash":123},
+        -2:{"paths":[["A","Yetkisiz"]]},
+        -3:{"paths":[["A","Bekle"]]},
+        -4:{"paths":[["A","Sonraki"]]},
+        7:{"paths":[["A","Kişi"]]},
+    }
+    try:
+        asyncio.run(w._create_invite_links(targets))
+        assert calls==[(-1,123),(-2,None),(-3,None)]
+        assert len(captured)==6
+        assert captured[0]["link"]==captured[1]["link"]=="https://t.me/+example_invite"
+        assert "yönetici" in captured[2]["error"]
+        assert "12 saniye" in captured[3]["error"] and captured[3]["error"]==captured[4]["error"]
+        assert "Kişi" in captured[5]["error"]
+        assert "1/5 başarılı" in w.statusBar().currentMessage()
+    finally:
+        w.telegram=None
+        w.close()
