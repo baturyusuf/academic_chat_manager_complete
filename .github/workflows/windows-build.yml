@@ -36,6 +36,10 @@ jobs:
         run: python -m compileall -q main.py media.py messaging.py storage.py telegram_service.py security.py tests
       - name: Run automated tests
         run: python -m pytest tests -q --junitxml=test-results.xml
+      - name: Check chat refresh with the native Windows Qt backend
+        env:
+          QT_QPA_PLATFORM: windows
+        run: python -m pytest tests/test_chat_refresh.py -q
       - uses: actions/upload-artifact@v4
         if: always()
         with:

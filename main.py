@@ -289,59 +289,61 @@ class MessageBubbleRow(QWidget):
     contextMenuRequested = Signal(QPoint)
     downloadRequested = Signal(dict)
 
-    def __init__(self, message):
-        super().__init__()
+    def __init__(self, message, parent=None):
+        super().__init__(parent)
         self.message = message
         self.outgoing = bool(message.get("outgoing"))
         self.is_group=message.get("chat_kind") in ("Grup","Kanal")
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         row = QHBoxLayout(self); row.setContentsMargins(8, 2, 8, 2); row.setSpacing(5)
-        self.bubble = QFrame(objectName="outgoingBubble" if self.outgoing else "incomingBubble")
+        self.bubble = QFrame(self, objectName="outgoingBubble" if self.outgoing else "incomingBubble")
         self.bubble.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Minimum)
         content = QVBoxLayout(self.bubble); content.setContentsMargins(10, 6, 10, 5); content.setSpacing(3)
-        sender = QLabel(message.get("sender_name") or "Telegram", objectName="messageSender")
+        # Showing a parentless QLabel creates a top-level window. Parent the
+        # labels before setting visibility, even when the row itself is hidden.
+        sender = QLabel(message.get("sender_name") or "Telegram", self.bubble, objectName="messageSender")
         sender.setVisible(self.is_group and not self.outgoing)
         attachments=message.get("attachments")
         if attachments is None:
             metadata=decode_media(message.get("media_json"))
             attachments=[{**metadata,"peer_id":message.get("peer_id"),"message_id":message.get("message_id")}] if metadata else []
         body_text = message.get("text") or ("" if attachments else "[Medya veya dosya]")
-        body = QLabel(body_text, objectName="messageText"); body.setWordWrap(True); body.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        body = QLabel(body_text, self.bubble, objectName="messageText"); body.setWordWrap(True); body.setTextInteractionFlags(Qt.TextSelectableByMouse)
         stamp=_format_local_datetime(message.get("date"),"%H:%M")
         edited=message.get("edit_date") and not message.get("edit_hidden")
-        footer = QLabel(("düzenlendi · " if edited else "")+stamp, objectName="messageTime"); footer.setAlignment(Qt.AlignRight)
-        ticks=QLabel("✓✓" if message.get("read") else "✓",objectName="messageTicks");ticks.setVisible(self.outgoing)
+        footer = QLabel(("düzenlendi · " if edited else "")+stamp, self.bubble, objectName="messageTime"); footer.setAlignment(Qt.AlignRight)
+        ticks=QLabel("✓✓" if message.get("read") else "✓",self.bubble,objectName="messageTicks");ticks.setVisible(self.outgoing)
         if edited:
             footer.setToolTip("Düzenlenme zamanı: "+_format_local_datetime(message["edit_date"],"%d.%m.%Y %H:%M:%S"))
         self.body = body; self.sender = sender; self.footer = footer;self.ticks=ticks
         if not self.outgoing and (self.is_group or message.get("chat_kind") in ("Kişi","Bot")):
-            avatar=QLabel(objectName="senderAvatar");avatar.setFixedSize(30,30)
+            avatar=QLabel(self,objectName="senderAvatar");avatar.setFixedSize(30,30)
             avatar_icon=message.get("sender_avatar_icon") if message.get("show_sender_avatar",True) else None
             if avatar_icon:avatar.setPixmap(avatar_icon.pixmap(30,30))
-            avatar.setVisible(True);self.sender_avatar=avatar;row.addWidget(avatar,0,Qt.AlignBottom)
+            self.sender_avatar=avatar;row.addWidget(avatar,0,Qt.AlignBottom)
         content.addWidget(sender)
         try:reply=json.loads(message.get("reply_json") or "null")
         except (TypeError,json.JSONDecodeError):reply=None
         if reply:
             quote=(reply.get("text") or "[Medya veya dosya]").replace("\n"," ").strip()
             if len(quote)>140:quote=quote[:137]+"…"
-            self.reply_quote=QLabel(f"↪ {reply.get('sender') or 'Mesaj'}\n{quote}",objectName="replyQuote");self.reply_quote.setWordWrap(True);content.addWidget(self.reply_quote)
+            self.reply_quote=QLabel(f"↪ {reply.get('sender') or 'Mesaj'}\n{quote}",self.bubble,objectName="replyQuote");self.reply_quote.setWordWrap(True);content.addWidget(self.reply_quote)
         content.addWidget(body)
         if not body_text:body.hide()
         self.attachment_buttons=[]
         for attachment in attachments:
-            card=QFrame(objectName="attachmentCard")
+            card=QFrame(self.bubble,objectName="attachmentCard")
             layout=QVBoxLayout(card);layout.setContentsMargins(9,7,9,7);layout.setSpacing(4)
             mime=str(attachment.get("mime_type") or "").lower()
             if mime.startswith("image/") and attachment.get("peer_id") is not None and attachment.get("message_id"):
-                preview=ClickableImagePreview("Görsel önizlemesi yükleniyor…",objectName="imagePreview")
+                preview=ClickableImagePreview("Görsel önizlemesi yükleniyor…",card,objectName="imagePreview")
                 preview.setAlignment(Qt.AlignCenter);preview.setMinimumSize(160,100);preview.setMaximumSize(420,280);preview.setCursor(Qt.PointingHandCursor)
                 preview.setProperty("mediaLoaded",False);preview.setProperty("mediaRequest",{"peer_id":attachment.get("peer_id"),"message_id":attachment.get("message_id"),"media_json":json.dumps(attachment,ensure_ascii=False)});layout.addWidget(preview)
-            name=QLabel(safe_filename(attachment.get("name")),objectName="attachmentName")
+            name=QLabel(safe_filename(attachment.get("name")),card,objectName="attachmentName")
             name.setTextFormat(Qt.PlainText);name.setWordWrap(True);layout.addWidget(name)
-            info=QLabel(format_size(attachment.get("size"))+(f" · {attachment['mime_type']}" if attachment.get("mime_type") else ""),objectName="muted")
+            info=QLabel(format_size(attachment.get("size"))+(f" · {attachment['mime_type']}" if attachment.get("mime_type") else ""),card,objectName="muted")
             info.setTextFormat(Qt.PlainText);info.setWordWrap(True);layout.addWidget(info)
-            button=QPushButton("İndir / Bilgisayara kaydet…",objectName="attachmentDownload")
+            button=QPushButton("İndir / Bilgisayara kaydet…",card,objectName="attachmentDownload")
             button.setAccessibleName("Dosyayı indir: "+name.text())
             available=attachment.get("peer_id") is not None and bool(attachment.get("message_id"))
             button.setEnabled(available)
@@ -350,7 +352,7 @@ class MessageBubbleRow(QWidget):
             button.clicked.connect(lambda checked=False,target=request:self.downloadRequested.emit(target))
             self.attachment_buttons.append(button);layout.addWidget(button);content.addWidget(card)
         footer_row=QHBoxLayout();footer_row.addStretch();footer_row.addWidget(footer);footer_row.addWidget(ticks);content.addLayout(footer_row)
-        self.reactions_label=QLabel("",objectName="reactionSummary")
+        self.reactions_label=QLabel("",self.bubble,objectName="reactionSummary")
         self.reactions_label.setTextFormat(Qt.PlainText);self.reactions_label.setWordWrap(True)
         content.addWidget(self.reactions_label)
         self.set_reactions(message.get("reactions_json"))
@@ -1030,27 +1032,62 @@ class MainWindow(QMainWindow):
         if rows:asyncio.create_task(self.load_history(peer_id,rows[0]['message_id'],generation))
     def _render_messages(self,peer_id):
         if self.context_mode!="chat" or self.selected_peer!=peer_id:return
-        self.messages.clear()
         chat=self.store.chat(peer_id) or {};kind=chat.get("kind")
+        rows=self.store.messages(peer_id,100)
+        read_checker=getattr(self.telegram,"is_message_read",None)
         previous=None
-        for m in self.store.messages(peer_id,100):
+        for m in rows:
             m["chat_kind"]=kind
-            if self.telegram:
-                read_checker=getattr(self.telegram,"is_message_read",None)
-                if read_checker:m["read"]=bool(m.get("read") or read_checker(peer_id,m.get("message_id")))
+            if read_checker:m["read"]=bool(m.get("read") or read_checker(peer_id,m["message_id"]))
             if kind in ("Grup","Kanal","Kişi","Bot") and not m.get("outgoing"):
-                sender_id=m.get("sender_id") if kind in ("Grup","Kanal") else peer_id
-                name=m.get("sender_name") or "Telegram"
                 previous_time=_local_datetime(previous.get("date")) if previous else None
                 current_time=_local_datetime(m.get("date"))
                 same_cluster=bool(previous_time and current_time and 0<=(current_time-previous_time).total_seconds()<=300)
                 same_sender=bool(same_cluster and previous and not previous.get("outgoing") and (kind not in ("Grup","Kanal") or previous.get("sender_id")==m.get("sender_id")))
                 m["show_sender_avatar"]=not same_sender
-                m["sender_avatar_icon"]=self._avatar_cache.get(int(sender_id)) if sender_id else None
-                if m["show_sender_avatar"] and not m.get("sender_avatar_icon"):m["sender_avatar_icon"]=self._avatar_icon(name)
-            self._append_message_bubble(m)
             previous=m
-        self.messages.scrollToBottom()
+
+        view=self.messages
+        # Reuse rows across live updates, including when the oldest row drops
+        # off the end of the 100-message history window.
+        positions={m["message_id"]: index for index,m in enumerate(rows)}
+        retained=[]
+        stale=[]
+        for index in range(view.count()):
+            data=view.item(index).data(Qt.UserRole) or {}
+            position=positions.get(data.get("message_id")) if data.get("peer_id")==peer_id else None
+            if position is None:
+                stale.append(index)
+            else:
+                retained.append(position)
+
+        updates_enabled=view.updatesEnabled()
+        view.setUpdatesEnabled(False)
+        try:
+            if retained!=sorted(set(retained)):
+                # Search results may be ordered differently from cached history.
+                view.clear()
+            else:
+                for index in reversed(stale):
+                    view.takeItem(index)
+            for index,message in enumerate(rows):
+                item=view.item(index)
+                current=item.data(Qt.UserRole) if item else None
+                if not current or current["message_id"]!=message["message_id"]:
+                    item=QListWidgetItem()
+                    view.insertItem(index,item)
+                else:
+                    current.pop("sender_avatar_icon",None)
+                    if current==message and view.itemWidget(item):
+                        continue
+                if message.get("show_sender_avatar"):
+                    sender_id=message.get("sender_id") if kind in ("Grup","Kanal") else peer_id
+                    icon=self._avatar_cache.get(int(sender_id)) if sender_id else None
+                    message["sender_avatar_icon"]=icon or self._avatar_icon(message.get("sender_name") or "Telegram")
+                self._set_message_bubble(item,message)
+            view.scrollToBottom()
+        finally:
+            view.setUpdatesEnabled(updates_enabled)
     def _append_message_bubble(self,message):
         message=dict(message)
         if message.get("chat_kind") is None and message.get("peer_id") is not None:
@@ -1061,7 +1098,7 @@ class MainWindow(QMainWindow):
 
     def _set_message_bubble(self,item,message):
         item.setData(Qt.UserRole,message)
-        row=MessageBubbleRow(message)
+        row=MessageBubbleRow(message,self.messages.viewport())
         row.set_bubble_limit(max(240,int(self.messages.viewport().width()*.76)))
         self.messages.setItemWidget(item,row)
         row.contextMenuRequested.connect(lambda global_pos,target=item:self._message_menu(self.messages.viewport().mapFromGlobal(global_pos),item=target))
@@ -1649,7 +1686,7 @@ class MainWindow(QMainWindow):
         self._refresh_ui_icons()
         if hasattr(self,'tree'):self.tree.doItemsLayout()
         self.store.set_preference('appearance/font',family);self.store.set_preference('appearance/font_size',size)
-        if self.selected_peer is not None:self._render_messages(self.selected_peer)
+        if hasattr(self,"messages"):self.messages._sync_bubble_widths()
     def apply_density(self,*args):
         if not hasattr(self,'chat_list'):return
         spacing={'Rahat':7,'Standart':4,'Yoğun':1}.get(self.density.currentText(),4);self.chat_list.setSpacing(spacing)
