@@ -243,3 +243,34 @@ def test_chat_message_time_uses_local_timezone_and_displays_reactions():
     row=main.MessageBubbleRow({"sender_name":"Yusuf","text":"Merhaba","date":value,"outgoing":1,"reactions_json":'[{"emoji":"👍","count":2}]',"reply_json":'{"sender":"Ayşe","text":"Toplantı saat kaçta?"}'})
     assert any(label.text()=="👍 2" for label in row.findChildren(main.QLabel))
     assert any("Ayşe" in label.text() and "Toplantı saat kaçta?" in label.text() for label in row.findChildren(main.QLabel))
+
+def test_clear_attachments_button_preserves_message_and_source_files(tmp_path,monkeypatch):
+    from academic_chat_manager import main
+    app=QApplication.instance() or QApplication([])
+    monkeypatch.setattr(main,"Store",lambda:__import__('academic_chat_manager.storage',fromlist=['Store']).Store(tmp_path/"attachments.sqlite3"))
+    monkeypatch.setattr(main,"app_data_dir",lambda:tmp_path)
+    main.PREFS.setValue("onboarding/dismissed",True)
+    w=MainWindow()
+    try:
+        button=w.clear_attachments
+        assert button.objectName()=="clearAttachments"
+        assert not button.isEnabled()
+        assert button.accessibleName()=="Tüm ekleri kaldır"
+        assert button.toolTip()
+        source=tmp_path/"notes.txt"
+        source.write_text("test",encoding="utf-8")
+        w.message_input.setPlainText("Mesaj metni")
+        w._add_chat_files([str(source)])
+        assert button.isEnabled()
+        assert "notes.txt" in w.pending_files_label.text()
+        for theme in ("Koyu","Açık"):
+            w.theme.setCurrentText(theme)
+            assert "QPushButton#clearAttachments:disabled" in w.styleSheet()
+        button.click()
+        assert not button.isEnabled()
+        assert w.pending_chat_files==[]
+        assert w.pending_files_label.text()==""
+        assert w.message_input.toPlainText()=="Mesaj metni"
+        assert source.is_file()
+    finally:
+        w.close()
