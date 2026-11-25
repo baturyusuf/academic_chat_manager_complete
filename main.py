@@ -8,7 +8,7 @@ if os.name=="nt" or not os.environ.get("SSL_CERT_FILE") or not Path(os.environ["
     os.environ["SSL_CERT_FILE"]=certifi.where()
 from datetime import datetime, timezone
 from PySide6.QtCore import Qt, QSettings, QSize, QRect, Signal, QMimeData, QTimer, QItemSelectionModel, QByteArray, QEvent, QPoint
-from PySide6.QtGui import QAction, QFont, QPixmap, QColor, QDrag, QIcon, QPalette, QKeySequence, QShortcut, QPainter
+from PySide6.QtGui import QAction, QFont, QPixmap, QColor, QDrag, QIcon, QPalette, QKeySequence, QShortcut, QPainter, QPainterPath
 from PySide6.QtWidgets import *
 from PySide6.QtSvg import QSvgRenderer
 from qasync import QEventLoop, asyncSlot
@@ -500,7 +500,7 @@ class InviteLinksDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__();self.setWindowTitle("Akademik Sohbet Yöneticisi");self.setWindowIcon(QIcon(str(APP_DIR/"assets"/"app.ico")));self.resize(1550,950);self.setMinimumSize(1050,650);self.setStyleSheet(_theme_stylesheet(False,"#A90025"))
-        self.store=Store();self.telegram=None;self.bulk=None;self.bulk_task=None;self._allow_close=False;self.dialogs={};self.selected_peer=None;self.reply_to=None;self.reply_context=None;self.current_collection=None;self.active_collection_ids=[];self.active_recipient_ids=[];self.context_mode="none";self._chat_open_generation=0;self.active_nav="chats";self.active_kind="Tümü";self.pending_chat_files=[];self._pasted_clipboard_files=set();self._uploading_clipboard_files=set();self._bulk_pasted_files=set();self._build();self._load_settings();self.refresh_chats();self.refresh_tree();self.refresh_history();self._update_pending_files()
+        self.store=Store();self.telegram=None;self.bulk=None;self.bulk_task=None;self._allow_close=False;self.dialogs={};self._avatar_cache={};self._avatar_loading=set();self.selected_peer=None;self.reply_to=None;self.reply_context=None;self.current_collection=None;self.active_collection_ids=[];self.active_recipient_ids=[];self.context_mode="none";self._chat_open_generation=0;self.active_nav="chats";self.active_kind="Tümü";self.pending_chat_files=[];self._pasted_clipboard_files=set();self._uploading_clipboard_files=set();self._bulk_pasted_files=set();self._build();self._load_settings();self.refresh_chats();self.refresh_tree();self.refresh_history();self._update_pending_files()
         api_hash=security.get_secret("api_hash");api_id=PREFS.value("telegram/api_id","")
         if api_hash and api_id:QTimer.singleShot(300,lambda:asyncio.create_task(self._reconnect()))
         elif not PREFS.value("onboarding/dismissed",False,type=bool):QTimer.singleShot(600,self._first_run_connect)
@@ -536,7 +536,7 @@ class MainWindow(QMainWindow):
         chips=QHBoxLayout();self.filters={}
         for label in ["Tümü","Gruplar","Kişiler","Kanallar","Botlar"]:
             b=QPushButton(label);b.setCheckable(True);b.setChecked(label=="Tümü");b.clicked.connect(lambda _,x=label:self.set_filter(x));chips.addWidget(b);self.filters[label]=b
-        cv.addLayout(chips);self.chat_list=DraggableChatList();self.chat_list.setIconSize(QSize(40,40));self.chat_list.setWordWrap(True);self.chat_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff);self.chat_list.setSelectionBehavior(QAbstractItemView.SelectRows);self.chat_list.itemSelectionChanged.connect(self._chat_selected);self.chat_list.setContextMenuPolicy(Qt.CustomContextMenu);self.chat_list.customContextMenuRequested.connect(self._chat_menu);cv.addWidget(self.chat_list,1);self.tabs.addTab(cp,"Sohbetler")
+        cv.addLayout(chips);self.chat_list=DraggableChatList();self.chat_list.setIconSize(QSize(40,40));self.chat_list.setWordWrap(True);self.chat_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff);self.chat_list.setSelectionBehavior(QAbstractItemView.SelectRows);self.chat_list.itemSelectionChanged.connect(self._chat_selected);self.chat_list.setContextMenuPolicy(Qt.CustomContextMenu);self.chat_list.customContextMenuRequested.connect(self._chat_menu);self.chat_list.verticalScrollBar().valueChanged.connect(lambda *_:self._queue_visible_avatars());cv.addWidget(self.chat_list,1);self.tabs.addTab(cp,"Sohbetler")
         fp=QWidget();fv=QVBoxLayout(fp);fv.setContentsMargins(3,8,3,2);fh=QHBoxLayout();fh.addWidget(QLabel("Klasörler",objectName="sectionTitle"));fh.addStretch();self.add_collection_btn=_icon_button("plus","Yeni klasör");self.add_collection_btn.clicked.connect(self.create_collection);fh.addWidget(self.add_collection_btn);fv.addLayout(fh);self.collection_search=QLineEdit();self.collection_search.setPlaceholderText("Klasörlerde ara…");self.collection_search.textChanged.connect(lambda _:self.refresh_tree());fv.addWidget(self.collection_search);self.tree=CollectionTree();self.tree.itemClicked.connect(self._collection_selected);self.tree.itemDoubleClicked.connect(self._collection_selected);self.tree.setContextMenuPolicy(Qt.CustomContextMenu);self.tree.customContextMenuRequested.connect(self._collection_menu);self.tree.chatsDropped.connect(self._dropped_chats);fv.addWidget(self.tree,1);self.tabs.addTab(fp,"Klasörler");self.tabs.currentChanged.connect(lambda i:self.navigate("chats" if i==0 else "folders"));self.center_stack.addWidget(p)
         self.settings_page=self._settings_page();self.history_page=self._history_page();self.filters_page=self._filters_page();self.bulk_page=self._bulk_page()
         for page in [self.settings_page,self.history_page,self.filters_page,self.bulk_page]:self.center_stack.addWidget(page)
@@ -601,17 +601,52 @@ class MainWindow(QMainWindow):
             receipt="✓✓ " if row.get("last_message_outgoing") and row.get("last_message_read") else "✓ " if row.get("last_message_outgoing") else ""
             title=f"{row['title']}\n{receipt}{row.get('last_message') or row['kind']} · {stamp}"
             if row['hidden']:title="◌  "+title
-            item=QListWidgetItem(title);item.setData(Qt.UserRole,row['peer_id']);item.setToolTip(row['title']);item.setIcon(self._avatar_icon(row['title']));item.setSizeHint(QSize(0,self._chat_row_height()));self.chat_list.addItem(item)
+            item=QListWidgetItem(title);item.setData(Qt.UserRole,row['peer_id']);item.setToolTip(row['title']);item.setIcon(self._avatar_cache.get(int(row['peer_id'])) or self._avatar_icon(row['title']));item.setSizeHint(QSize(0,self._chat_row_height()));self.chat_list.addItem(item)
             peer_id=int(row['peer_id'])
             if peer_id in selected_peers:item.setSelected(True)
             if peer_id==current_peer:self.chat_list.setCurrentItem(item,QItemSelectionModel.NoUpdate)
             elif peer_id==keep_peer and current_peer is None:self.chat_list.setCurrentItem(item,QItemSelectionModel.NoUpdate)
         self.chat_list.blockSignals(False)
+        if rows:QTimer.singleShot(0,self._queue_visible_avatars)
     def _chat_row_height(self):
         base={"Rahat":76,"Standart":66,"Yoğun":56}.get(self.density.currentText() if hasattr(self,"density") else "Rahat",66)
         return round(base*(self.font_size.value()/13)) if hasattr(self,"font_size") else base
     def _avatar_icon(self,title):
         seed=sum((i+1)*ord(ch) for i,ch in enumerate(title));palette=["#bb3151","#7356b8","#3478a8","#287c6b","#bd7440","#546a9f"];color=QColor(palette[seed%len(palette)]);pix=QPixmap(38,38);pix.fill(Qt.transparent);p=QPainter(pix);p.setRenderHint(QPainter.Antialiasing);p.setBrush(color);p.setPen(Qt.NoPen);p.drawEllipse(1,1,36,36);p.setPen(Qt.white);font=QFont("Segoe UI",11,QFont.Bold);p.setFont(font);p.drawText(pix.rect(),Qt.AlignCenter,"".join(x[0] for x in title.split()[:2]).upper()[:2] or "?");p.end();return QIcon(pix)
+    def _photo_avatar_icon(self,data):
+        source=QPixmap()
+        if not source.loadFromData(data):return None
+        side=64;scaled=source.scaled(side,side,Qt.KeepAspectRatioByExpanding,Qt.SmoothTransformation)
+        pix=QPixmap(side,side);pix.fill(Qt.transparent);p=QPainter(pix);p.setRenderHint(QPainter.Antialiasing);clip=QPainterPath();clip.addEllipse(1,1,side-2,side-2);p.setClipPath(clip)
+        p.drawPixmap((side-scaled.width())//2,(side-scaled.height())//2,scaled);p.end();return QIcon(pix)
+    def _queue_visible_avatars(self):
+        if not self.telegram or not self.telegram.client or not self.telegram.client.is_connected():return
+        try:loop=asyncio.get_running_loop()
+        except RuntimeError:return
+        for index in range(self.chat_list.count()):
+            item=self.chat_list.item(index)
+            if not self.chat_list.visualItemRect(item).intersects(self.chat_list.viewport().rect()):continue
+            peer_id=int(item.data(Qt.UserRole)) if item.data(Qt.UserRole) is not None else None
+            if peer_id is not None and peer_id not in self._avatar_cache and peer_id not in self._avatar_loading:
+                loop.create_task(self._ensure_chat_avatar(peer_id))
+    async def _ensure_chat_avatar(self,peer_id):
+        if peer_id in self._avatar_cache or peer_id in self._avatar_loading:return
+        service=self.telegram
+        if not service or not service.client or not service.client.is_connected():return
+        self._avatar_loading.add(peer_id)
+        try:
+            data=await service.download_profile_photo(peer_id)
+            icon=self._photo_avatar_icon(data) if data else None
+            if self.telegram is service:
+                self._avatar_cache[peer_id]=icon
+                for index in range(self.chat_list.count()):
+                    item=self.chat_list.item(index)
+                    if item.data(Qt.UserRole)==peer_id:
+                        item.setIcon(icon or self._avatar_icon((self.store.chat(peer_id) or {}).get("title","Telegram")))
+                if self.selected_peer==peer_id and icon:self.chat_avatar.setPixmap(icon.pixmap(42,42))
+        except Exception:
+            if self.telegram is service:self._avatar_cache[peer_id]=None
+        finally:self._avatar_loading.discard(peer_id)
     def refresh_tree(self):
         if not hasattr(self,"tree"):return
         selected=[]
@@ -714,7 +749,9 @@ class MainWindow(QMainWindow):
         self._chat_open_generation+=1;generation=self._chat_open_generation
         self.context_mode="chat";self.selected_peer=int(peer_id);self.active_collection_ids=[];self.active_recipient_ids=[int(peer_id)];self.current_collection=owner_collection
         self._clear_reply();self._clear_chat_files();self.older_messages_btn.setEnabled(True);self.message_search.setEnabled(True)
-        self.chat_title.setText(row['title']);self.chat_meta.setText(f"{row['kind']} · {row.get('username') or 'Telegram'}");self.chat_avatar.setPixmap(self._avatar_icon(row['title']).pixmap(42,42))
+        self.chat_title.setText(row['title']);self.chat_meta.setText(f"{row['kind']} · {row.get('username') or 'Telegram'}");self.chat_avatar.setPixmap((self._avatar_cache.get(int(peer_id)) or self._avatar_icon(row['title'])).pixmap(42,42))
+        try:asyncio.get_running_loop().create_task(self._ensure_chat_avatar(int(peer_id)))
+        except RuntimeError:pass
         self.message_input.send_on_enter=True;self.message_input.setPlaceholderText("Mesaj yazın veya dosyaları buraya sürükleyin… (Enter: gönder, Shift+Enter: yeni satır)");self.messages.clear()
         asyncio.create_task(self._open_telegram_chat(int(peer_id),generation))
     def _render_collection_history(self):
@@ -795,9 +832,10 @@ class MainWindow(QMainWindow):
                 with self.store.db() as db:db.execute("UPDATE collections SET color=? WHERE id=?",(color.name(),int(cid)))
                 self.refresh_tree()
         elif chosen==icon_action:
-            icon,ok=QInputDialog.getText(self,"Klasör simgesi","Bir emoji veya kısa simge:",text="📁")
-            if ok and icon.strip():
-                with self.store.db() as db:db.execute("UPDATE collections SET icon=? WHERE id=?",(icon.strip()[:8],int(cid)))
+            options=["📁","📂","🎓","📚","🧠","💻","🔬","🧪","🗂️","📌","⭐","✅","✉️","👥","🏫","🌐"]
+            chooser=QInputDialog(self);chooser.setWindowTitle("Klasör simgesi");chooser.setLabelText("Hazır simge seçin veya kutuya özel bir emoji/metin yazın:");chooser.setComboBoxItems(options);chooser.setComboBoxEditable(True);chooser.setTextValue("📁")
+            if chooser.exec()==QDialog.Accepted and chooser.textValue().strip():
+                with self.store.db() as db:db.execute("UPDATE collections SET icon=? WHERE id=?",(chooser.textValue().strip()[:8],int(cid)))
                 self.refresh_tree()
     def _start_invite_link_creation(self,collection_ids,peer_ids):
         """Resolve selected folder/chat targets and start creating their invite links."""
@@ -1308,6 +1346,7 @@ class MainWindow(QMainWindow):
             answer=QMessageBox.question(self,"Farklı Telegram hesabı", "Başka bir Telegram hesabına geçiyorsunuz. Önceki hesaba ait sohbet önbelleği temizlenecek; koleksiyon klasörleri korunacak fakat sohbet üyelikleri silinecek. Devam edilsin mi?",QMessageBox.Yes|QMessageBox.No)
             if answer!=QMessageBox.Yes:return False
             self.store.clear_telegram_data()
+            self._avatar_cache.clear()
         if user_id is not None:self.store.set_preference('telegram/user_id',int(user_id))
         name=" ".join(filter(None,[getattr(user,'first_name',None),getattr(user,'last_name',None)])) or getattr(user,'username',None) or "Telegram hesabı";self.account_label.setText(name);self.connection_label.setText("●  Telegram bağlı");self.connection_label.setStyleSheet("color:#18833b;font-weight:600");self.account_status.setText(f"Bağlı hesap: {name}");self.statusBar().showMessage("Telegram hesabı bağlandı")
         if self.telegram:self.telegram.start_updates(self._on_live_message,self._on_message_edited)

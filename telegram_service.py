@@ -272,6 +272,9 @@ class TelegramService:
         if data is not None and len(data)>max_bytes:
             return None
         return data
+    async def download_profile_photo(self,peer_id):
+        """Return a peer's current profile photo in memory, or None if it has none."""
+        return await self.client.download_profile_photo(self._entity(peer_id),file=bytes)
     async def edit_message(self,peer_id,message_id,text):return await self.client.edit_message(self._entity(peer_id),message_id,text)
     async def delete_message(self,peer_id,message_id,revoke=True):return await self.client.delete_messages(self._entity(peer_id),message_id,revoke=revoke)
     async def search_messages(self,peer_id,query,limit=50):return await self.client.get_messages(self._entity(peer_id),search=query,limit=limit)

@@ -1,7 +1,7 @@
 import os
 os.environ.setdefault("QT_QPA_PLATFORM","offscreen")
 from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import Qt, QPoint
+from PySide6.QtCore import Qt, QPoint, QBuffer, QIODevice
 from PySide6.QtGui import QImage, QColor
 from PySide6.QtTest import QTest
 from academic_chat_manager.main import MainWindow
@@ -382,6 +382,13 @@ def test_image_attachment_has_preview_area():
     row=MessageBubbleRow({"peer_id":-17,"message_id":21,"text":"","outgoing":0,"media_json":'{"name":"foto.jpg","size":2048,"mime_type":"image/jpeg"}'})
     preview=row.findChild(__import__('PySide6.QtWidgets',fromlist=['QLabel']).QLabel,"imagePreview")
     assert preview is not None and preview.property("mediaRequest")["message_id"]==21
+
+def test_profile_photo_avatar_is_cropped_into_icon():
+    from academic_chat_manager.main import MainWindow
+    app=QApplication.instance() or QApplication([])
+    image=QImage(24,16,QImage.Format_ARGB32);image.fill(QColor("#4477aa"));buffer=QBuffer();buffer.open(QIODevice.WriteOnly);image.save(buffer,"PNG")
+    icon=MainWindow._photo_avatar_icon(None,bytes(buffer.data()))
+    assert icon is not None and not icon.isNull() and not icon.pixmap(42,42).isNull()
 
 def test_invite_copy_text_excludes_errors_and_keeps_folder_indentation():
     from academic_chat_manager.main import InviteLinksDialog
