@@ -398,3 +398,42 @@ def test_bulk_history_can_download_each_sent_attachment(tmp_path,monkeypatch):
         assert len(row.attachment_buttons)==2 and all(button.isEnabled() for button in row.attachment_buttons)
     finally:
         w.close()
+
+def test_reaction_menu_marks_own_reactions_and_updates_exact_row(tmp_path,monkeypatch):
+    import asyncio
+    import json
+    from types import SimpleNamespace
+    from academic_chat_manager import main
+    app=QApplication.instance() or QApplication([])
+    monkeypatch.setattr(main,"Store",lambda:__import__('academic_chat_manager.storage',fromlist=['Store']).Store(tmp_path/"reaction-ui.sqlite3"))
+    main.PREFS.setValue("onboarding/dismissed",True)
+    w=MainWindow()
+    try:
+        original={"peer_id":-17,"message_id":2,"sender_id":1,"sender_name":"Yusuf","text":"Mesaj","date":"2026-11-19T12:00:00+00:00","outgoing":0,"media_json":None,"reactions_json":json.dumps([{"emoji":"❤","count":2,"chosen":True},{"emoji":"👍","count":3,"chosen":False}])}
+        other={**original,"message_id":3}
+        w.store.cache_messages([original,other])
+        w._append_message_bubble(original)
+        w._append_message_bubble(other)
+        first=w.messages.item(0)
+        row=w.messages.itemWidget(first)
+        class CaptureMenu(main.QMenu):
+            def exec(self,*args):
+                submenu=next(action.menu() for action in self.actions() if action.text()=="Tepki bırak")
+                selected=[action.text() for action in submenu.actions() if action.isChecked()]
+                assert selected==["❤️"]
+                return None
+        monkeypatch.setattr(main,"QMenu",CaptureMenu)
+        w._message_menu(w.messages.visualItemRect(first).center(),item=first)
+        async def react(peer,message_id,emoji):
+            assert (peer,message_id,emoji)==(-17,2,"❤️")
+            return "removed",[{"emoji":"❤","count":1,"chosen":False}]
+        w.telegram=SimpleNamespace(client=SimpleNamespace(is_connected=lambda:True),send_reaction=react)
+        asyncio.run(w._react_to_message(original,"❤️"))
+        assert w.messages.count()==2 and w.messages.itemWidget(first) is row
+        assert row.reactions_label.text()=="❤ 1"
+        assert json.loads(first.data(Qt.UserRole)["reactions_json"])[0]["chosen"] is False
+        assert json.loads(w.store.messages(-17)[0]["reactions_json"])[0]["chosen"] is False
+        assert json.loads(w.messages.item(1).data(Qt.UserRole)["reactions_json"])[0]["chosen"] is True
+    finally:
+        w.telegram=None
+        w.close()

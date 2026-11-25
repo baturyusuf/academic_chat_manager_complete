@@ -3,19 +3,54 @@ from __future__ import annotations
 import asyncio
 import os
 import tempfile
+import time
 from datetime import timezone
 from pathlib import Path
 from telethon import TelegramClient, events, errors, types, utils
-from telethon.tl.functions.messages import GetHistoryRequest, SendReactionRequest
+from telethon.tl.functions.messages import GetHistoryRequest, SendReactionRequest, GetMessagesReactionsRequest
+from telethon.tl.functions.help import GetAppConfigRequest
 try:
     from .media import media_metadata
 except ImportError:
     from media import media_metadata
 
+def emoji_key(emoji):
+    return str(emoji).replace("\ufe0f", "").replace("\ufe0e", "")
+
+
+def reaction_rows(message):
+    rows=[]
+    for item in getattr(getattr(message,"reactions",None),"results",[]) or []:
+        emoji=getattr(getattr(item,"reaction",None),"emoticon",None)
+        if emoji:
+            order=getattr(item,"chosen_order",None)
+            rows.append({"emoji":emoji,"count":int(getattr(item,"count",0) or 0),"chosen":order is not None,"chosen_order":order})
+    return rows
+
+
+def next_reactions(message,emoji,limit):
+    """Return the complete desired list, excluding paid reactions."""
+    selected=[]
+    for item in getattr(getattr(message,"reactions",None),"results",[]) or []:
+        order=getattr(item,"chosen_order",None)
+        reaction=getattr(item,"reaction",None)
+        if order is not None and isinstance(reaction,(types.ReactionEmoji,types.ReactionCustomEmoji)):
+            selected.append((order,reaction))
+    current=[reaction for _,reaction in sorted(selected,key=lambda pair:pair[0])]
+    key=emoji_key(emoji)
+    remaining=[reaction for reaction in current if not isinstance(reaction,types.ReactionEmoji) or emoji_key(reaction.emoticon)!=key]
+    if len(remaining)!=len(current):
+        return remaining,"removed"
+    desired=remaining+[types.ReactionEmoji(emoticon=str(emoji))]
+    return desired[-max(1,limit):],"replaced" if len(desired)>limit else "added"
+
+
 class TelegramService:
     def __init__(self,session_path:Path):
         self.session_path=Path(session_path); self.client=None; self._code_hash=None; self._phone=None; self._dialogs={}; self.on_message=None
+        self._reaction_lock=asyncio.Lock();self._reaction_limit_cache=None
     async def connect(self,api_id:int,api_hash:str):
+        self._reaction_limit_cache=None
         self.client=TelegramClient(str(self.session_path),api_id,api_hash,connection_retries=5,request_retries=3,auto_reconnect=True,timeout=15)
         await self.client.connect()
         session_file=Path(str(self.session_path)+".session")
@@ -58,20 +93,74 @@ class TelegramService:
             sender=getattr(m,"sender",None)
             sender_name=(" ".join(filter(None,[getattr(sender,"first_name",None),getattr(sender,"last_name",None)])) or getattr(sender,"title",None)) if sender else ("Siz" if m.out else str(m.sender_id or ""))
             file=media_metadata(m)
-            reaction_rows=[]
-            for item in getattr(getattr(m,"reactions",None),"results",[]) or []:
-                emoji=getattr(getattr(item,"reaction",None),"emoticon",None)
-                if emoji:reaction_rows.append({"emoji":emoji,"count":int(getattr(item,"count",0) or 0),"chosen":bool(getattr(item,"chosen",False))})
+            reactions=reaction_rows(m)
             reply_id=getattr(getattr(m,"reply_to",None),"reply_to_msg_id",None)
-            rows.append({"peer_id":peer_id,"message_id":m.id,"sender_id":m.sender_id,"sender_name":sender_name,"text":m.message or "","date":m.date.isoformat() if m.date else None,"outgoing":int(m.out),"media_json":__import__('json').dumps(file,ensure_ascii=False) if file else None,"reactions_json":__import__('json').dumps(reaction_rows,ensure_ascii=False),"reply_to_message_id":reply_id,"message":m})
+            rows.append({"peer_id":peer_id,"message_id":m.id,"sender_id":m.sender_id,"sender_name":sender_name,"text":m.message or "","date":m.date.isoformat() if m.date else None,"outgoing":int(m.out),"media_json":__import__('json').dumps(file,ensure_ascii=False) if file else None,"reactions_json":__import__('json').dumps(reactions,ensure_ascii=False),"reply_to_message_id":reply_id,"message":m})
         return rows
     async def send_text(self,peer_id,text,reply_to=None):return await self.client.send_message(self._entity(peer_id),text,reply_to=reply_to)
     async def export_chat_invite_link(self,peer_id):
         """Create an invite link for a group/channel using the connected account's rights."""
         return await self.client.export_chat_invite_link(self._entity(int(peer_id)))
+    async def _reaction_limit(self):
+        now=time.monotonic()
+        if self._reaction_limit_cache and now-self._reaction_limit_cache[0]<300:
+            return self._reaction_limit_cache[1]
+        user=await self.client.get_me()
+        premium=bool(getattr(user,"premium",False))
+        key="reactions_user_max_premium" if premium else "reactions_user_max_default"
+        limit=3 if premium else 1
+        try:
+            response=await self.client(GetAppConfigRequest(hash=0))
+            for entry in getattr(getattr(response,"config",None),"value",[]) or []:
+                if getattr(entry,"key",None)==key:
+                    value=getattr(getattr(entry,"value",None),"value",None)
+                    if isinstance(value,(int,float)) and value>=1:limit=int(value)
+                    break
+        except errors.FloodWaitError:
+            raise
+        except errors.RPCError:
+            # Telegram documents these defaults if app config is unavailable.
+            pass
+        self._reaction_limit_cache=(now,limit)
+        return limit
+
+    @staticmethod
+    def _reaction_update(result,peer_id,message_id):
+        for update in getattr(result,"updates",[]) or []:
+            if isinstance(update,types.UpdateMessageReactions) and update.msg_id==message_id and utils.get_peer_id(update.peer)==int(peer_id) and not getattr(update.reactions,"min",False):
+                return update
+        return None
+
+    async def _full_reaction_message(self,peer,peer_id,message_id):
+        message=await self.client.get_messages(peer,ids=message_id)
+        if not message or isinstance(message,types.MessageEmpty):raise ValueError("Telegram mesajı bulunamadı")
+        if getattr(getattr(message,"reactions",None),"min",False):
+            updates=await self.client(GetMessagesReactionsRequest(peer=peer,id=[message_id]))
+            message=self._reaction_update(updates,peer_id,message_id)
+            if message is None:raise ValueError("Mesajın güncel tepki bilgisi alınamadı")
+        return message
+
     async def send_reaction(self,peer_id,message_id,emoji):
-        request=SendReactionRequest(peer=self._entity(int(peer_id)),msg_id=int(message_id),reaction=[types.ReactionEmoji(emoticon=str(emoji))])
-        return await self.client(request)
+        # Serialize read/modify/write so rapid clicks cannot overwrite one another.
+        async with self._reaction_lock:
+            peer=self._entity(int(peer_id));message_id=int(message_id)
+            message=await self._full_reaction_message(peer,peer_id,message_id)
+            desired,outcome=next_reactions(message,emoji,await self._reaction_limit())
+            # The official desktop client omits the optional reaction vector when clearing the last reaction.
+            try:
+                result=await self.client(SendReactionRequest(peer=peer,msg_id=message_id,reaction=desired or None,add_to_recent=outcome!="removed"))
+            except errors.MessageNotModifiedError:
+                result=None
+                outcome="unchanged"
+            update=self._reaction_update(result,peer_id,message_id)
+            if update is not None:return outcome,reaction_rows(update)
+            # Fetch the exact message, including older/search results, not just latest history.
+            try:
+                updated=await self._full_reaction_message(peer,peer_id,message_id)
+                return outcome,reaction_rows(updated)
+            except Exception:
+                # The mutation succeeded; do not report it as a failed send.
+                return outcome,None
     async def mark_read(self,peer_id,max_id):return await self.client.send_read_acknowledge(self._entity(peer_id),max_id=max_id)
     async def send_files(self,peer_id,paths,caption="",progress_callback=None,reply_to=None):
         paths=[str(Path(p)) for p in paths]
@@ -113,7 +202,7 @@ class TelegramService:
             m=event.message; peer_id=utils.get_peer_id(event.message.peer_id); sender=getattr(m,"sender",None)
             name=(" ".join(filter(None,[getattr(sender,"first_name",None),getattr(sender,"last_name",None)])) or getattr(sender,"title",None)) if sender else ("Siz" if m.out else str(m.sender_id or ""))
             media=media_metadata(m)
-            row={"peer_id":peer_id,"chat_title":getattr(event.chat,"title",None) or getattr(event.chat,"first_name",None) or name,"message_id":m.id,"sender_id":m.sender_id,"sender_name":name,"text":m.message or "","date":m.date.isoformat() if m.date else None,"outgoing":int(m.out),"media_json":__import__('json').dumps(media,ensure_ascii=False) if media else None,"message":m}
+            row={"peer_id":peer_id,"chat_title":getattr(event.chat,"title",None) or getattr(event.chat,"first_name",None) or name,"message_id":m.id,"sender_id":m.sender_id,"sender_name":name,"text":m.message or "","date":m.date.isoformat() if m.date else None,"outgoing":int(m.out),"media_json":__import__('json').dumps(media,ensure_ascii=False) if media else None,"reactions_json":__import__('json').dumps(reaction_rows(m),ensure_ascii=False),"message":m}
             result=handler(row)
             if hasattr(result,"__await__"):await result
         self.client.add_event_handler(on_new_message,events.NewMessage())
