@@ -13,13 +13,13 @@ from PySide6.QtSvg import QSvgRenderer
 from qasync import QEventLoop, asyncSlot
 try:  # package import for tests; direct imports for the frozen desktop entry point
     from .storage import Store, app_data_dir
-    from .telegram_service import TelegramService
+    from .telegram_service import TelegramService, reaction_rows, emoji_key
     from .messaging import BulkSender
     from .media import media_metadata, decode_media, format_size, safe_filename, bulk_attachment_cards
     from . import security
 except ImportError:
     from storage import Store, app_data_dir
-    from telegram_service import TelegramService
+    from telegram_service import TelegramService, reaction_rows, emoji_key
     from messaging import BulkSender
     from media import media_metadata, decode_media, format_size, safe_filename, bulk_attachment_cards
     import security
@@ -182,6 +182,7 @@ def _theme_stylesheet(dark: bool, accent: str) -> str:
     QLabel#messageSender{{font-weight:650;color:{highlight}}}
     QLabel#messageText{{color:{c['text']}}}
     QLabel#messageTime{{color:{c['muted']}}}
+    QLabel#reactionSummary{{color:{c['muted']};padding:3px 0}}
     QLabel#replyQuote{{background:{c['raised']};border-left:3px solid {accent};border-radius:5px;padding:5px 8px;color:{c['muted']}}}
     QListWidget#messages::item{{border:0;background:transparent;padding:0}}
     QScrollBar:vertical{{background:transparent;width:10px;margin:3px}}
@@ -297,18 +298,27 @@ class MessageBubbleRow(QWidget):
             button.clicked.connect(lambda checked=False,target=request:self.downloadRequested.emit(target))
             self.attachment_buttons.append(button);layout.addWidget(button);content.addWidget(card)
         content.addWidget(footer)
-        reactions=[]
-        try:reactions=json.loads(message.get("reactions_json") or "[]")
-        except (TypeError,json.JSONDecodeError):pass
-        if reactions:
-            self.reactions_label=QLabel("  ".join(f"{r.get('emoji','')} {r.get('count',0)}" for r in reactions if r.get("emoji")),objectName="muted")
-            if self.reactions_label.text():content.addWidget(self.reactions_label)
+        self.reactions_label=QLabel("",objectName="reactionSummary")
+        self.reactions_label.setTextFormat(Qt.PlainText);self.reactions_label.setWordWrap(True)
+        content.addWidget(self.reactions_label)
+        self.set_reactions(message.get("reactions_json"))
         if self.outgoing: row.addStretch(1); row.addWidget(self.bubble)
         else: row.addWidget(self.bubble); row.addStretch(1)
         # Selectable QLabels otherwise consume right-clicks with a native text menu.
         # Intercept the context event only; normal text selection remains available.
         for widget in [self, *self.findChildren(QWidget)]:
             widget.installEventFilter(self)
+
+    def set_reactions(self,value):
+        try:rows=json.loads(value) if isinstance(value,str) else value or []
+        except (TypeError,ValueError):rows=[]
+        if not isinstance(rows,list):rows=[]
+        rows=[r for r in rows if isinstance(r,dict) and r.get("emoji")]
+        self.reactions_label.setText("  ".join(f"{r['emoji']} {r.get('count',0)}"+(" ✓" if r.get("chosen") else "") for r in rows))
+        own=[r["emoji"] for r in rows if r.get("chosen")]
+        self.reactions_label.setToolTip("Tepkileriniz: "+" ".join(own) if own else "Mesaj tepkileri")
+        self.reactions_label.setVisible(bool(rows))
+        self.message["reactions_json"]=json.dumps(rows,ensure_ascii=False)
 
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Type.ContextMenu:
@@ -965,8 +975,17 @@ class MainWindow(QMainWindow):
         copy=menu.addAction(icon("copy"),"Metni kopyala")
         copy_selection=menu.addAction(icon("copy"),"Seçili metni kopyala") if selected_text else None
         reaction_menu=menu.addMenu(icon("emoji"),"Tepki bırak")
-        for emoji in ["👍","❤️","😂","😮","😢","🙏","🔥","🎉"]:
-            reaction_action=reaction_menu.addAction(emoji);reaction_action.triggered.connect(lambda checked=False,value=emoji,target=m:asyncio.create_task(self._react_to_message(target,value)))
+        try:reactions=json.loads(m.get("reactions_json") or "[]")
+        except (TypeError,ValueError):reactions=[]
+        if not isinstance(reactions,list):reactions=[]
+        own={emoji_key(r["emoji"]):r["emoji"] for r in reactions if isinstance(r,dict) and r.get("chosen") and r.get("emoji")}
+        choices=["👍","❤️","😂","😮","😢","🙏","🔥","🎉"]
+        choices.extend(value for key,value in own.items() if key not in {emoji_key(emoji) for emoji in choices})
+        for emoji in choices:
+            reaction_action=reaction_menu.addAction(emoji)
+            reaction_action.setCheckable(True);reaction_action.setChecked(emoji_key(emoji) in own)
+            reaction_action.setToolTip("Tepkiyi kaldırmak için seçin" if reaction_action.isChecked() else "Tepki bırak")
+            reaction_action.triggered.connect(lambda checked=False,value=emoji,target=m:asyncio.create_task(self._react_to_message(target,value)))
         download=menu.addAction(icon("download"),"Dosyayı indir…") if decode_media(m.get("media_json")) else None
         edit=delete=None
         if m.get("outgoing"):
@@ -986,10 +1005,30 @@ class MainWindow(QMainWindow):
             if ok:asyncio.create_task(self._edit_message(m,text))
         elif delete is not None and chosen==delete and QMessageBox.question(self,"Mesajı sil","Telegram'dan da silinsin mi?",QMessageBox.Yes|QMessageBox.No)==QMessageBox.Yes:asyncio.create_task(self._delete_message(m))
     async def _react_to_message(self,message,emoji):
+        if not self.telegram or not self.telegram.client or not self.telegram.client.is_connected():
+            QMessageBox.information(self,"Telegram bağlı değil","Tepki bırakmak için Telegram hesabını bağlayın.");return
+        service=self.telegram
         try:
-            await self.telegram.send_reaction(message['peer_id'],message['message_id'],emoji)
-            await self.load_history(message['peer_id']);self.statusBar().showMessage(f"{emoji} tepkisi eklendi",4000)
-        except Exception as e:QMessageBox.warning(self,"Tepki gönderilemedi",str(e))
+            outcome,reactions=await service.send_reaction(message["peer_id"],message["message_id"],emoji)
+        except Exception as e:
+            code=str(getattr(e,"message","")).upper()
+            detail={"REACTION_INVALID":"Bu tepki sohbet için izinli olmayabilir.","REACTIONS_TOO_MANY":"Bu mesaj izin verilen farklı tepki sınırına ulaştı.","PREMIUM_ACCOUNT_REQUIRED":"Bu tepki için Telegram Premium gerekiyor.","REACTION_EMPTY":"Telegram tepki listesini kabul etmedi."}.get(code,str(e))
+            QMessageBox.warning(self,"Tepki gönderilemedi",detail);return
+        if self.telegram is not service:return
+        if reactions is not None:
+            self.store.update_message_reactions(message["peer_id"],message["message_id"],reactions)
+            # Preserve the scroll position and search result list, even for older messages.
+            for index in range(self.messages.count()):
+                item=self.messages.item(index);data=item.data(Qt.UserRole) or {}
+                if data.get("kind") or (data.get("peer_id"),data.get("message_id"))!=(message["peer_id"],message["message_id"]):continue
+                data["reactions_json"]=json.dumps(reactions,ensure_ascii=False);item.setData(Qt.UserRole,data)
+                row=self.messages.itemWidget(item)
+                if isinstance(row,MessageBubbleRow):
+                    row.set_reactions(reactions)
+                    row.set_bubble_limit(max(240,int(self.messages.viewport().width()*.76)))
+                    item.setSizeHint(QSize(max(1,self.messages.viewport().width()),row.sizeHint().height()+28))
+        status={"added":"eklendi","removed":"kaldırıldı","replaced":"değiştirildi"}[outcome]
+        self.statusBar().showMessage(f"{emoji} tepkisi {status}"+(" · Görünüm güncellenemedi" if reactions is None else ""),5000)
     async def _download_message(self,m):
         if not self.telegram or not self.telegram.client or not self.telegram.client.is_connected():
             QMessageBox.information(self,"Telegram bağlı değil","Dosya indirmek için Telegram hesabını bağlayın.");return
@@ -1024,10 +1063,7 @@ class MainWindow(QMainWindow):
             self.messages.clear()
             for m in reversed(rows):
                 metadata=media_metadata(m)
-                reactions=[]
-                for item in getattr(getattr(m,"reactions",None),"results",[]) or []:
-                    emoji=getattr(getattr(item,"reaction",None),"emoticon",None)
-                    if emoji:reactions.append({"emoji":emoji,"count":int(getattr(item,"count",0) or 0),"chosen":bool(getattr(item,"chosen",False))})
+                reactions=reaction_rows(m)
                 self._append_message_bubble({"peer_id":self.selected_peer,"message_id":m.id,"sender_id":getattr(m,"sender_id",None),"sender_name":"Siz" if m.out else str(getattr(m,"sender_id",None) or "Telegram"),"text":m.message or "","date":m.date.isoformat() if m.date else "","outgoing":int(bool(m.out)),"media_json":json.dumps(metadata,ensure_ascii=False) if metadata else None,"reactions_json":json.dumps(reactions,ensure_ascii=False)})
         except Exception as e:QMessageBox.warning(self,"Arama başarısız",str(e))
     def start_bulk(self,cid=None):
@@ -1186,7 +1222,7 @@ class MainWindow(QMainWindow):
             except Exception:await self.telegram.disconnect()
         self.telegram=None;self.connection_label.setText("●  Bağlantı yok");self.account_status.setText("Bağlı değil")
     def _on_live_message(self,row):
-        self.store.cache_messages([{k:row[k] for k in ['peer_id','message_id','sender_id','sender_name','text','date','outgoing','media_json']}])
+        self.store.cache_messages([{k:row.get(k) for k in ['peer_id','message_id','sender_id','sender_name','text','date','outgoing','media_json','reactions_json']}])
         if not self.store.chat(row['peer_id']):
             self.store.upsert_chats([{"peer_id":row['peer_id'],"access_hash":None,"title":row.get('chat_title') or "Telegram sohbet","kind":"Grup" if row['peer_id']<0 else "Kişi","username":None,"can_send":1,"unread_count":0,"last_message":row['text'] or "Medya","last_message_at":row['date']}])
         else:self.store.update_last_message(row['peer_id'],row['text'] or "Medya",row['date'],incoming=not row['outgoing'])
