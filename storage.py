@@ -139,6 +139,9 @@ class Store:
     def cache_messages(self,rows):
         normalized=[{**row,"reactions_json":row.get("reactions_json"),"reply_json":row.get("reply_json")} for row in rows]
         with self.db() as c:c.executemany("INSERT OR REPLACE INTO cached_messages(peer_id,message_id,sender_id,sender_name,text,date,outgoing,media_json,reactions_json,reply_json) VALUES(:peer_id,:message_id,:sender_id,:sender_name,:text,:date,:outgoing,:media_json,:reactions_json,:reply_json)",normalized)
+    def update_message_reactions(self,peer_id,message_id,reactions):
+        with self.db() as c:
+            c.execute("UPDATE cached_messages SET reactions_json=? WHERE peer_id=? AND message_id=?",(json.dumps(reactions,ensure_ascii=False),int(peer_id),int(message_id)))
     def messages(self,peer_id,limit=100,before_id=None):
         with self.db() as c:
             if before_id is None: rows=c.execute("SELECT * FROM cached_messages WHERE peer_id=? ORDER BY message_id DESC LIMIT ?",(peer_id,limit)).fetchall()
