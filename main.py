@@ -12,6 +12,11 @@ from PySide6.QtWidgets import QAbstractItemView, QApplication, QCheckBox, QCombo
 from qasync import QEventLoop
 from time import monotonic
 
+# The frozen build must configure CA certificates before Telegram imports
+# its HTTP client, which creates an SSL context at import time.
+if os.name == "nt" or not os.environ.get("SSL_CERT_FILE") or not Path(os.environ["SSL_CERT_FILE"]).is_file():
+    os.environ["SSL_CERT_FILE"] = certifi.where()
+
 if __package__:
     from . import security
     from .appearance_view import AppearanceView
@@ -43,9 +48,6 @@ else:  # Direct and frozen entry points
     from update_view import UpdateView
     from version import APP_VERSION
 
-
-if os.name=="nt" or not os.environ.get("SSL_CERT_FILE") or not Path(os.environ["SSL_CERT_FILE"]).is_file():
-    os.environ["SSL_CERT_FILE"]=certifi.where()
 
 PREFS = QSettings("RumeliAcademic", "AcademicChatManager")
 
