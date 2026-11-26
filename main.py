@@ -1,5 +1,5 @@
 from __future__ import annotations
-import asyncio, json, mimetypes, os, sys, traceback, uuid
+import asyncio, json, mimetypes, os, sys, traceback, uuid, shutil, subprocess, tempfile
 from pathlib import Path
 from telethon.errors import FloodWaitError
 from functools import lru_cache
@@ -26,6 +26,13 @@ except ImportError:
     from messaging import BulkSender
     from media import media_metadata, decode_media, format_size, safe_filename, bulk_attachment_cards
     import security
+
+try:
+    from .version import APP_VERSION, UPDATE_PUBLIC_KEY
+    from . import update_service
+except ImportError:
+    from version import APP_VERSION, UPDATE_PUBLIC_KEY
+    import update_service
 
 APP_DIR=Path(__file__).parent
 PREFS=QSettings("RumeliAcademic","AcademicChatManager")
@@ -595,10 +602,20 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__();self.setWindowTitle("Akademik Sohbet Yöneticisi");self.setWindowIcon(QIcon(str(APP_DIR/"assets"/"app.ico")));self.resize(1550,950);self.setMinimumSize(1050,650);self.setStyleSheet(_theme_stylesheet(False,"#A90025"))
         self._fullscreen_preview = None
+        self._update = None
+        self._update_checking = False
+        self._update_busy = False
+        self._direct_sends = 0
         self.store=Store();self.telegram=None;self.bulk=None;self.bulk_task=None;self._allow_close=False;self.dialogs={};self._avatar_cache={};self._avatar_loading=set();self._image_preview_cache={};self._image_preview_tasks={};self._preview_scan_queued=False;self._last_notification_at=float("-inf");self._suppressed_notifications=0;self._last_priority_notification_at=float("-inf");self._suppressed_priority_notifications=0;self.selected_peer=None;self.reply_to=None;self.reply_context=None;self.current_collection=None;self.active_collection_ids=[];self.active_recipient_ids=[];self.context_mode="none";self._chat_open_generation=0;self.active_nav="chats";self.active_kind="Tümü";self.pending_chat_files=[];self._pasted_clipboard_files=set();self._uploading_clipboard_files=set();self._bulk_pasted_files=set();self._build();self._load_settings();self.refresh_chats();self.refresh_tree();self.refresh_history();self._update_pending_files()
         api_hash=security.get_secret("api_hash");api_id=PREFS.value("telegram/api_id","")
         if api_hash and api_id:QTimer.singleShot(300,lambda:asyncio.create_task(self._reconnect()))
         elif not PREFS.value("onboarding/dismissed",False,type=bool):QTimer.singleShot(600,self._first_run_connect)
+        if self._updates_enabled():
+            self._update_timer = QTimer(self)
+            self._update_timer.setInterval(60 * 60 * 1000)
+            self._update_timer.timeout.connect(lambda: asyncio.create_task(self._check_updates()))
+            self._update_timer.start()
+            QTimer.singleShot(2000, lambda: asyncio.create_task(self._check_updates()))
     def _first_run_connect(self):
         if self.isVisible():self.connect_telegram();PREFS.setValue("onboarding/dismissed",True)
     def _build(self):
@@ -606,13 +623,94 @@ class MainWindow(QMainWindow):
         self.main_splitter=QSplitter(Qt.Horizontal);self.main_splitter.setChildrenCollapsible(False);self.main_splitter.setHandleWidth(7);self.sidebar=self._sidebar();self.main_splitter.addWidget(self.sidebar)
         self.splitter=QSplitter(Qt.Horizontal);self.splitter.setChildrenCollapsible(False);self.splitter.setHandleWidth(7);self.splitter.addWidget(self._center_panel());self.splitter.addWidget(self._conversation_panel());self.splitter.setSizes(self.store.preference("panel_sizes",[460,920]));self.splitter.setStretchFactor(1,1);self.main_splitter.addWidget(self.splitter);self.main_splitter.setSizes(self.store.preference("main_panel_sizes",[210,1340]));self.main_splitter.setStretchFactor(1,1);body.addWidget(self.main_splitter,1);outer.addLayout(body,1);self.setCentralWidget(root);self.setStatusBar(QStatusBar());self.statusBar().showMessage("Telegram bağlantısı kurulmadı")
         toolbar=QHBoxLayout();self.sidebar_toggle=_icon_button("panel",tooltip="Menü panelini aç veya kapat");self.sidebar_toggle.clicked.connect(self.toggle_sidebar);toolbar.addWidget(self.sidebar_toggle)
-        self.global_search=QLineEdit();self.global_search.setPlaceholderText("Sohbetlerde ara…  Ctrl+K");self.global_search.setFixedWidth(330);self.global_search.textChanged.connect(lambda _:self.refresh_chats());toolbar.addWidget(self.global_search);shortcut=QShortcut(QKeySequence("Ctrl+K"),self);shortcut.activated.connect(self.global_search.setFocus);toolbar.addStretch();self.connection_label=QLabel("●  Bağlantı yok");toolbar.addWidget(self.connection_label);self.account_label=QLabel("Telegram kullanıcısı");toolbar.addWidget(self.account_label);outer.insertLayout(0,toolbar)
+        self.global_search=QLineEdit();self.global_search.setPlaceholderText("Sohbetlerde ara…  Ctrl+K");self.global_search.setFixedWidth(330);self.global_search.textChanged.connect(lambda _:self.refresh_chats());toolbar.addWidget(self.global_search);shortcut=QShortcut(QKeySequence("Ctrl+K"),self);shortcut.activated.connect(self.global_search.setFocus);toolbar.addStretch();self.update_button=QPushButton("Güncelleme mevcut");self.update_button.hide();self.update_button.clicked.connect(self._offer_update);toolbar.addWidget(self.update_button);toolbar.addWidget(QLabel("v"+APP_VERSION));self.connection_label=QLabel("●  Bağlantı yok");toolbar.addWidget(self.connection_label);self.account_label=QLabel("Telegram kullanıcısı");toolbar.addWidget(self.account_label);outer.insertLayout(0,toolbar)
         outer.insertWidget(1, self._build_notification_banner())
         self.splitter.splitterMoved.connect(lambda *_:self.store.set_preference("panel_sizes",self.splitter.sizes()))
         self.main_splitter.splitterMoved.connect(lambda *_:self.store.set_preference("main_panel_sizes",self.main_splitter.sizes()))
         self.tray=QSystemTrayIcon(self);self.tray.setIcon(QIcon(str(APP_DIR/"assets"/"app.ico")));self.tray.setToolTip("Akademik Sohbet Yöneticisi");self.tray.show()
         self.tray.messageClicked.connect(self._open_recent_notifications)
         if not self.store.preference("appearance/sidebar_visible",True):self.sidebar.hide()
+    def _updates_enabled(self):
+        return bool(sys.platform == "win32" and getattr(sys, "frozen", False)
+                    and UPDATE_PUBLIC_KEY and (Path(sys.executable).parent / "Updater.exe").is_file())
+
+    async def _check_updates(self):
+        if self._update_checking or self._update_busy or not self._updates_enabled():
+            return
+        self._update_checking = True
+        try:
+            update = await asyncio.to_thread(update_service.check_update, APP_VERSION, UPDATE_PUBLIC_KEY)
+            self._update = update
+            self.update_button.setVisible(update is not None)
+            if update:
+                self.update_button.setText("↑ Güncelleme: v" + update.version)
+        except Exception:
+            # Offline, malformed or untrusted release: do not interrupt Telegram.
+            pass
+        finally:
+            self._update_checking = False
+
+    def _offer_update(self):
+        if self._update is None or self._update_busy:
+            return
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("Yeni sürüm")
+        dialog.setTextFormat(Qt.PlainText)
+        dialog.setText(f"v{APP_VERSION} → v{self._update.version}\n\n"
+                       "Güncelleme indirilecek ve onayınızla yeniden başlatılacaktır.")
+        dialog.setDetailedText(self._update.notes or "Sürüm notu yok.")
+        dialog.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        if dialog.exec() == QMessageBox.Yes:
+            asyncio.create_task(self._download_and_install(self._update))
+
+    def _update_can_restart(self):
+        return not (self._direct_sends or (self.bulk_task and not self.bulk_task.done())
+                    or (self.bulk and self.bulk.current_job)
+                    or self.message_input.toPlainText().strip() or self.pending_chat_files
+                    or self._fullscreen_preview is not None)
+
+    async def _download_and_install(self, update):
+        if self._update_busy:
+            return
+        self._update_busy = True
+        self.update_button.setEnabled(False)
+        stage = None
+        launched = False
+        try:
+            base = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "AcademicChatManager" / "updates"
+            base.mkdir(parents=True, exist_ok=True)
+            stage = Path(tempfile.mkdtemp(prefix="update-", dir=base))
+            loop = asyncio.get_running_loop()
+            def progress(current, total):
+                loop.call_soon_threadsafe(self.update_button.setText, f"İndiriliyor %{100*current//total}")
+            self.update_button.setText("İndiriliyor…")
+            await asyncio.to_thread(update_service.download_update, update, stage, progress)
+            if not self._update_can_restart():
+                QMessageBox.information(self, "Güncelleme", "Aktif gönderimi bitirin ve mesaj taslaklarını kaydedin veya temizleyin; ardından güncellemeyi tekrar başlatın.")
+                return
+            if QMessageBox.question(self, "Güncelleme hazır", "Güncelle ve yeniden başlat?", QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+                return
+            if not self._update_can_restart():
+                return
+            app = Path(sys.executable).resolve()
+            helper = stage / "Updater.exe"
+            shutil.copy2(app.parent / "Updater.exe", helper)
+            subprocess.Popen([str(helper), str(os.getpid()), str(app), str(stage)],
+                             cwd=str(stage), env=dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT="1"),
+                             creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
+            launched = True
+            self.setEnabled(False)
+            self.close()
+        except Exception as error:
+            QMessageBox.warning(self, "Güncelleme başarısız", str(error))
+        finally:
+            if not launched:
+                if stage is not None:
+                    shutil.rmtree(stage, ignore_errors=True)
+                self._update_busy = False
+                self.update_button.setEnabled(True)
+                self.update_button.setText("↑ Güncelleme: v" + update.version)
+
     def _build_notification_banner(self):
         self.notification_banner = QFrame(objectName="notificationBanner")
         row = QHBoxLayout(self.notification_banner)
@@ -1582,6 +1680,7 @@ class MainWindow(QMainWindow):
         if self.context_mode!="chat" or self.selected_peer is None:QMessageBox.information(self,"Sohbet seçin","Önce bir Telegram sohbeti veya klasör seçin.");return
         peer_id=self.selected_peer;generation=self._chat_open_generation;files=list(self.pending_chat_files);sent_reply_context={**self.reply_context,"message_id":self.reply_to} if self.reply_context else None
         uploaded=False
+        self._direct_sends += 1
         if files:self._uploading_clipboard_files.update(p for p in files if p in self._pasted_clipboard_files)
         try:
             sent=await self.telegram.send_files(peer_id,files,caption=text,progress_callback=self._upload_progress,reply_to=self.reply_to) if files else await self.telegram.send_text(peer_id,text,reply_to=self.reply_to)
@@ -1596,6 +1695,7 @@ class MainWindow(QMainWindow):
             self.message_input.clear();self._clear_chat_files();self._clear_reply();self.message_input.setPlaceholderText("Mesaj yazın veya dosyaları buraya sürükleyin…");await self.load_history(peer_id,generation=generation,reply_context=sent_reply_context)
         except Exception as e:QMessageBox.warning(self,"Mesaj gönderilemedi",str(e))
         finally:
+            self._direct_sends -= 1
             pasted={p for p in files if p in self._pasted_clipboard_files}
             self._uploading_clipboard_files.difference_update(pasted)
             discarded=pasted if uploaded else {p for p in pasted if p not in self.pending_chat_files}
@@ -2171,11 +2271,17 @@ class MainWindow(QMainWindow):
         self.store.set_preference('appearance/credit',self.credit_check.isChecked());self._allow_close=True;self.close()
 
 def main():
+    mutex = None
     if sys.platform=="win32":
         try:
             import ctypes
+            from ctypes import wintypes
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
+            kernel.CreateMutexW.restype = wintypes.HANDLE
+            mutex = kernel.CreateMutexW(None, False, "Local\\AcademicChatManagerRunning")
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("IstanbulRumeli.AkademikSohbetYoneticisi")
         except Exception:pass
-    app=QApplication(sys.argv);app.setApplicationName("Akademik Sohbet Yöneticisi");app.setApplicationDisplayName("Akademik Sohbet Yöneticisi");app.setWindowIcon(QIcon(str(APP_DIR/"assets"/"app.ico")));app.setFont(QFont('Segoe UI',10));loop=QEventLoop(app);asyncio.set_event_loop(loop);window=MainWindow();window.setWindowIcon(QIcon(str(APP_DIR/"assets"/"app.ico")));window.show()
+    app=QApplication(sys.argv);app.setApplicationName("Akademik Sohbet Yöneticisi");app.setApplicationVersion(APP_VERSION);app.setApplicationDisplayName("Akademik Sohbet Yöneticisi");app.setWindowIcon(QIcon(str(APP_DIR/"assets"/"app.ico")));app.setFont(QFont('Segoe UI',10));loop=QEventLoop(app);asyncio.set_event_loop(loop);window=MainWindow();window.setWindowIcon(QIcon(str(APP_DIR/"assets"/"app.ico")));window.show()
     with loop:loop.run_forever()
 if __name__=='__main__':main()

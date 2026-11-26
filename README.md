@@ -51,3 +51,20 @@ Windows PowerShell'de son satır yerine `$env:QT_QPA_PLATFORM = 'offscreen'` ve 
 - `tests/`: çevrimdışı otomatik kontroller.
 
 Uygulama gönderilen mesajı Telegram'ın kabul ettiği durumla raporlar. Okundu bilgisi yalnız Telegram tarafından teyit edilirse Telegram'ın gerçek okundu durumu kullanılır; gönderim başarısı okundu olarak sunulmaz. FloodWait geldiğinde kuyruk bekleme süresini atlatmaya çalışmaz; o hedefi işaretler ve sonraki gönderimleri durdurur.
+
+## Stable releases and automatic updates
+
+Son kullanıcı için Python, Git ve .venv gerekmez: ilk kurulumu [GitHub Releases](https://github.com/baturyusuf/academic_chat_manager_complete/releases/latest) sayfasındaki **AcademicChatManager-Setup.exe** ile yapın. Stable kurulum üst çubukta yeni sürümü gösterir; onayla indirir, doğrular ve yeniden başlatır. CI/portable ve kaynak kodu çalıştırmaları otomatik güncelleme yapmaz.
+
+Yayın süreci (repo sahibi için):
+1. Önce bu altyapıyı main'e birleştirin; main'den publish branch'ini oluşturun ve PR/branch koruması ile yalnız güvenilir değişiklikleri kabul edin.
+2. Güvenilir, yerel bir Python ortamında cryptography kurun. Aşağıdaki komut tek seferlik 32 bayt Ed25519 private key üretir. Çıktıyı hiçbir zaman commit veya log etmeyin; Settings → Secrets and variables → Actions altında ACM_RELEASE_SIGNING_KEY olarak kaydedin ve güvenli çevrimdışı yedeğini alın.
+
+   ```sh
+   python -c "import base64,os; print(base64.b64encode(os.urandom(32)).decode())"
+   ```
+
+3. main → publish PR ile yayınlayın veya publish üzerinde workflow_dispatch çalıştırın. Testler, Windows build, imzalı manifest ve release otomatik üretilir. Workflow run numarası pyproject taban sürümünün patch bileşenine eklenir; major/minor değişimi bilinçli pyproject değişikliğidir. Tekrar çalıştırma aynı tag'i kullanır; mevcut yayımlanmış release değiştirilmez. Doküman/test-only push yayın tetiklemez.
+4. İlk kurulumun kaynağı GitHub Releases olmalıdır. Ed25519 doğrulama anahtarı pakete gömülür; sonraki güncellemeler aynı anahtarla imzalanmalıdır. Anahtar rotasyonu için yeni güven kökü dağıtım planı gerekir. Windows Authenticode henüz yoktur; SmartScreen uyarısı çıkabilir.
+
+Güncelleme, doğrulanmış tam installer paketini indirir (delta güncelleme yok). Kurulu uygulama kapandıktan sonra helper SQLite yedeği alır, kurulumu uygular ve uygulamayı yeniden başlatır. APPDATA ve Windows Credential Manager korunur. Kurulum hataları staging dizinindeki log ile raporlanır; otomatik binary rollback henüz yoktur. Sorun halinde önceki release installer'ı ve migration uyumluluğu kontrol edilerek manuel kurtarma yapılmalıdır. Stable yayınlamadan önce temiz Windows 10/11 kullanıcı hesabında iki ardışık imzalı sürümle kurulum, güncelleme ve veri koruma testi yapın.

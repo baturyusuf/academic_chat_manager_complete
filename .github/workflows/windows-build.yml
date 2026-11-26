@@ -46,6 +46,8 @@ jobs:
           name: test-results
           path: test-results.xml
           if-no-files-found: warn
+      - name: Prepare unsigned development build metadata
+        run: python scripts/release_manifest.py prepare
       - name: Build portable folder
         run: >-
           python -m PyInstaller --noconfirm --clean --onedir --windowed
@@ -62,6 +64,15 @@ jobs:
           --add-data "assets/app.ico;assets"
           --collect-submodules telethon --collect-submodules keyring.backends
           --collect-data certifi main.py
+      - name: Build test installer
+        run: |
+          $version = python -c "from version import APP_VERSION; print(APP_VERSION)"
+          & ./scripts/build_installer.ps1 -Version $version -ReusePortable
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AcademicChatManager-Setup-CI
+          path: dist/AcademicChatManager-Setup.exe
+          if-no-files-found: error
       - name: Verify outputs and package portable folder
         shell: pwsh
         run: |
