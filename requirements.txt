@@ -3,3 +3,4 @@ Telethon>=1.36,<2
 qasync>=0.27,<1
 keyring>=25,<26
 certifi>=2024.2.2
+cryptography>=42,<47
