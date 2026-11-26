@@ -43,7 +43,12 @@ Windows PowerShell'de son satır yerine `$env:QT_QPA_PLATFORM = 'offscreen'` ve 
 
 ## Mimari
 
-- `main.py`: PySide6 arayüzü, qasync uygulama döngüsü ve kullanıcı işlemleri.
+- `main.py`: qasync uygulama döngüsü, ana pencerenin kurulumu, gezinme ve Telegram bağlantısının yaşam döngüsü.
+- `chat_view.py`, `collection_view.py`, `bulk_view.py`: sohbet, klasör ve toplu gönderim ekranlarının kendi olayları ve durumu.
+- `media_view.py`, `notification_view.py`, `appearance_view.py`, `update_view.py`: ekler, bildirimler, görünüm ve güncelleme arayüzü.
+- `ui_widgets.py`, `ui_dialogs.py`, `ui_common.py`: ortak Qt bileşenleri, diyaloglar ve görsel kaynaklar.
+- `notification_delivery.py`: Qt'den bağımsız masaüstü bildirim zamanlaması.
+- `update_service.py` ve `updater.py`: güncelleme doğrulama, indirme ve kurulum işlemleri.
 - `telegram_service.py`: Telethon oturum, senkronizasyon, geçmiş, dosya, mesaj ve yeni ileti güncellemeleri.
 - `storage.py`: SQLite şeması, migrasyon, sohbet/klasör ilişkileri, tercih ve gönderim geçmişi.
 - `messaging.py`: Onaylanmış toplu gönderim ve kuyruk durumu.
