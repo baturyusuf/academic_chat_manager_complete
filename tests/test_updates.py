@@ -66,3 +66,18 @@ def test_untrusted_redirect():
         updates._trusted_url("https://example.com/setup.exe")
     with pytest.raises(ValueError):
         updates._trusted_url("http://github.com/setup.exe")
+
+def test_download_verifies_before_return(monkeypatch, tmp_path):
+    import io
+    envelope, public = signed()
+    update = updates.verify_manifest(envelope, public, "0.1.9")
+    monkeypatch.setattr(updates, "_open", lambda url: io.BytesIO(b"installer"))
+    path = updates.download_update(update, tmp_path / "valid")
+    assert path.read_bytes() == b"installer"
+    assert (path.parent / updates.MANIFEST).read_bytes() == envelope
+
+    monkeypatch.setattr(updates, "_open", lambda url: io.BytesIO(b"tampered!"))
+    with pytest.raises(ValueError):
+        updates.download_update(update, tmp_path / "invalid")
+    assert not (tmp_path / "invalid" / updates.INSTALLER).exists()
+    assert not (tmp_path / "invalid" / (updates.INSTALLER + ".part")).exists()

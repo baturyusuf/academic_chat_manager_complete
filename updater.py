@@ -46,6 +46,8 @@ def main():
     pid, app_path, stage_path = sys.argv[1:]
     app, stage = Path(app_path), Path(stage_path)
     parent_exited = False
+    # Reset even on verification or backup failure before restarting the app.
+    ctypes.windll.kernel32.SetDllDirectoryW(None)
     try:
         wait_for_parent(int(pid))
         parent_exited = True
@@ -53,8 +55,6 @@ def main():
         installer = stage / INSTALLER
         verify_package(installer, update)
         backup_database()
-        # Do not leak PyInstaller's temporary DLL search directory into native children.
-        ctypes.windll.kernel32.SetDllDirectoryW(None)
         env = dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT="1")
         result = subprocess.run([str(installer), "/VERYSILENT", "/SUPPRESSMSGBOXES",
                                  "/NORESTART", "/SP-", "/NOCLOSEAPPLICATIONS",

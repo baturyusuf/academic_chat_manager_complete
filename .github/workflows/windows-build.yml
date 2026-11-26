@@ -68,6 +68,10 @@ jobs:
         run: |
           $version = python -c "from version import APP_VERSION; print(APP_VERSION)"
           & ./scripts/build_installer.ps1 -Version $version -ReusePortable
+      - name: Smoke test installed application
+        run: |
+          $version = python -c "from version import APP_VERSION; print(APP_VERSION)"
+          & ./scripts/smoke_installer.ps1 -Version $version
       - uses: actions/upload-artifact@v4
         with:
           name: AcademicChatManager-Setup-CI

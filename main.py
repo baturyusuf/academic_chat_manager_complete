@@ -2271,6 +2271,10 @@ class MainWindow(QMainWindow):
         self.store.set_preference('appearance/credit',self.credit_check.isChecked());self._allow_close=True;self.close()
 
 def main():
+    # Offline package smoke test: verify frozen startup imports and version
+    # without opening Telegram, the user database or credential storage.
+    if len(sys.argv) == 3 and sys.argv[1] == "--self-test":
+        return 0 if APP_VERSION == sys.argv[2] and (APP_DIR / "assets" / "app.ico").is_file() else 1
     mutex = None
     if sys.platform=="win32":
         try:
@@ -2284,4 +2288,4 @@ def main():
         except Exception:pass
     app=QApplication(sys.argv);app.setApplicationName("Akademik Sohbet Yöneticisi");app.setApplicationVersion(APP_VERSION);app.setApplicationDisplayName("Akademik Sohbet Yöneticisi");app.setWindowIcon(QIcon(str(APP_DIR/"assets"/"app.ico")));app.setFont(QFont('Segoe UI',10));loop=QEventLoop(app);asyncio.set_event_loop(loop);window=MainWindow();window.setWindowIcon(QIcon(str(APP_DIR/"assets"/"app.ico")));window.show()
     with loop:loop.run_forever()
-if __name__=='__main__':main()
+if __name__=='__main__':sys.exit(main())

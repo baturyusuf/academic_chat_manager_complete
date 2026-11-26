@@ -15,8 +15,34 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  plan:
     if: github.ref == 'refs/heads/publish'
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compare against latest published release
+        id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=$(gh release list --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // ""')
+          if [ -z "$tag" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif git diff --quiet "$tag" "$GITHUB_SHA" -- . ':(exclude,glob)**/*.md' ':(exclude,glob)tests/**'; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+  build:
+    needs: plan
+    if: needs.plan.outputs.changed == 'true'
     runs-on: windows-latest
     timeout-minutes: 40
     env:
@@ -30,8 +56,11 @@ jobs:
       - name: Install and test
         run: |
           python -m pip install -r requirements-dev.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m pip install --no-deps -e .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m pip check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m pytest tests -q
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Prepare version and public key
@@ -45,6 +74,8 @@ jobs:
       - name: Build installer
         run: |
           & ./scripts/build_installer.ps1 -Version "${{ steps.version.outputs.version }}"
+      - name: Smoke test installed application
+        run: ./scripts/smoke_installer.ps1 -Version "${{ steps.version.outputs.version }}"
       - name: Sign installer manifest
         env:
           ACM_RELEASE_SIGNING_KEY: ${{ secrets.ACM_RELEASE_SIGNING_KEY }}
