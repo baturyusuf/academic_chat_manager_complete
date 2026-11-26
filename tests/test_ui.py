@@ -12,7 +12,9 @@ def test_main_window_starts_with_real_empty_data(tmp_path,monkeypatch):
     from academic_chat_manager import main
     monkeypatch.setattr(main,"Store",lambda:__import__('academic_chat_manager.storage',fromlist=['Store']).Store(tmp_path/"ui.sqlite3"))
     main.PREFS.setValue("onboarding/dismissed",True)
-    w=MainWindow();assert w.windowTitle()=="Akademik Sohbet Yöneticisi";assert w.store.chats()==[];w.close()
+    w=MainWindow();assert w.windowTitle()=="Akademik Sohbet Yöneticisi";assert w.store.chats()==[]
+    assert w.credit.text() == "RUDIC tarafından geliştirilmiştir."
+    w.close()
 def test_collection_tree_and_settings_navigation(tmp_path,monkeypatch):
     app=QApplication.instance() or QApplication([])
     from academic_chat_manager import main
@@ -205,17 +207,21 @@ def test_visible_notifications_use_one_banner_and_keep_full_message(tmp_path, mo
 
         # The same conversation must notify after the window is minimized.
         monkeypatch.setattr(w, "isMinimized", lambda: True)
-        times = iter((10.0, 11.0))
+        times = iter((10.0, 11.0, 16.0))
         monkeypatch.setattr(main, "monotonic", lambda: next(times))
         w._show_local_notification({**record, "text": "Pencere küçültülmüşken"})
         w._show_local_notification({**record, "text": "Kısa aralıkta ikinci ileti"})
-        assert len(calls) == 1 and w._suppressed_notifications == 1
+        assert len(calls) == 1
         assert w.notification_inbox.count() == 4
         w._show_local_notification({**record, "outgoing": 1, "text": "Kendi mesajım"})
         w.notification_mode.setCurrentText("Sessiz mod")
         w._show_local_notification({**record, "text": "Sessiz moddayken"})
         assert w.notification_inbox.count() == 4
         assert len(calls) == 1
+
+        w.notification_mode.setCurrentText("Tüm bildirimler")
+        w._show_local_notification({**record, "text": "Bekleme süresi doldu"})
+        assert calls[-1][1] == "2 yeni mesaj · Bekleme süresi doldu"
     finally:
         w.close()
 
